@@ -1,0 +1,105 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\NyscAuthController;
+use App\Http\Controllers\NyscStudentController;
+use App\Http\Controllers\NyscPaymentController;
+use App\Http\Controllers\NyscAdminController;
+use App\Http\Controllers\NyscDocumentController;
+
+Route::prefix('nysc')->group(function () {
+
+    // ✅ Unified login (student + admin)
+    Route::post('login', [NyscAuthController::class, 'login']);
+
+    // ✅ Token verification
+    Route::middleware('auth:sanctum')->get('auth/verify', [NyscAuthController::class, 'verify']);
+    
+    // ✅ Logout
+    Route::middleware('auth:sanctum')->post('logout', [NyscAuthController::class, 'logout']);
+
+    // ✅ Student routes (with student token ability)
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::get('student/details', [NyscStudentController::class, 'getDetails']);
+        Route::get('student/analytics', [NyscStudentController::class, 'getAnalytics']);
+        Route::post('student/update', [NyscStudentController::class, 'updateDetails']);
+        Route::post('student/confirm', [NyscStudentController::class, 'confirmDetails']);
+        Route::post('student/submit', [NyscStudentController::class, 'submitDetails']);
+        Route::get('student/payment-history', [NyscStudentController::class, 'getPaymentHistory']);
+        Route::get('student/profile', [NyscStudentController::class, 'getProfile']);
+        Route::put('student/profile', [NyscStudentController::class, 'updateProfile']);
+        Route::get('student/study-modes', [NyscStudentController::class, 'getStudyModes']);
+        
+        // Document management
+        Route::get('student/documents', [NyscDocumentController::class, 'getDocuments']);
+        Route::post('student/documents/upload', [NyscDocumentController::class, 'uploadDocument']);
+        Route::delete('student/documents/{filename}', [NyscDocumentController::class, 'deleteDocument']);
+
+        Route::post('payment', [NyscPaymentController::class, 'initiatePayment']);
+        Route::get('payment/verify', [NyscPaymentController::class, 'verifyPayment']);
+        Route::get('payment/history', [NyscPaymentController::class, 'getPaymentHistory']);
+        Route::get('payment/receipt/{paymentId}', [NyscPaymentController::class, 'getPaymentReceipt']);
+        Route::get('student/updated-info', [NyscPaymentController::class, 'getUpdatedStudentInfo']);
+    });
+
+    // Paystack webhook (no authentication required)
+    Route::post('payment/webhook', [NyscPaymentController::class, 'webhook']);
+
+    // ✅ Admin routes (with admin token ability)
+    Route::prefix('admin')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('dashboard', [NyscAdminController::class, 'dashboard']);
+        Route::get('dashboard-with-settings', [NyscAdminController::class, 'getDashboardWithSettings']);
+        Route::post('control', [NyscAdminController::class, 'control']);
+        Route::get('control', [NyscAdminController::class, 'getControl']);
+        
+        // Admin Settings Management
+        Route::get('settings', [NyscAdminController::class, 'getSettings']);
+        Route::put('settings', [NyscAdminController::class, 'updateSettings']);
+        Route::get('students', [NyscAdminController::class, 'getStudents']);
+        Route::get('students-data', [NyscAdminController::class, 'getStudentsData']);
+        Route::put('student/{studentId}', [NyscAdminController::class, 'updateStudent']);
+        Route::get('exports/{format}', [NyscAdminController::class, 'export']);
+        Route::get('export-students/{format}', [NyscAdminController::class, 'exportStudents']);
+        Route::get('payments', [NyscAdminController::class, 'payments']);
+        
+        // Submissions management routes
+        Route::get('submissions', [NyscAdminController::class, 'getSubmissions']);
+        Route::get('submissions/{submissionId}', [NyscAdminController::class, 'getSubmissionDetails']);
+        Route::put('submissions/{submissionId}/status', [NyscAdminController::class, 'updateSubmissionStatus']);
+        
+        // Export jobs management routes
+        Route::post('export-jobs', [NyscAdminController::class, 'createExportJob']);
+        Route::get('export-jobs', [NyscAdminController::class, 'getExportJobs']);
+        Route::get('export-jobs/{jobId}', [NyscAdminController::class, 'getExportJobStatus']);
+        Route::get('export-jobs/{jobId}/download', [NyscAdminController::class, 'downloadExportFile']);
+        
+        // Student management routes
+        Route::get('students/all', [NyscAdminController::class, 'getAllStudents']);
+        Route::get('students/stats', [NyscAdminController::class, 'getStudentStats']);
+        Route::get('students/{studentId}', [NyscAdminController::class, 'getStudentDetails']);
+        Route::get('students/export', [NyscAdminController::class, 'exportStudents']);
+        
+        // System settings routes
+        Route::get('settings/system', [NyscAdminController::class, 'getSystemSettings']);
+        Route::put('settings/system', [NyscAdminController::class, 'updateSystemSettings']);
+        Route::get('settings/email', [NyscAdminController::class, 'getEmailSettings']);
+        Route::put('settings/email', [NyscAdminController::class, 'updateEmailSettings']);
+        Route::post('settings/test-email', [NyscAdminController::class, 'testEmail']);
+        Route::post('settings/clear-cache', [NyscAdminController::class, 'clearCache']);
+        
+        // Admin user management routes
+        Route::get('admin-users', [NyscAdminController::class, 'getAdminUsers']);
+        Route::post('admin-users', [NyscAdminController::class, 'createAdminUser']);
+        Route::put('admin-users/{userId}', [NyscAdminController::class, 'updateAdminUser']);
+        Route::delete('admin-users/{userId}', [NyscAdminController::class, 'deleteAdminUser']);
+        
+        // Admin profile management
+        Route::put('profile', [NyscAdminController::class, 'updateAdminProfile']);
+        
+        // CSV upload and additional settings routes
+        Route::post('upload-csv', [NyscAdminController::class, 'uploadCsv']);
+        Route::get('csv-template', [NyscAdminController::class, 'downloadCsvTemplate']);
+        Route::post('clear-cache', [NyscAdminController::class, 'clearCache']);
+        Route::post('test-email', [NyscAdminController::class, 'testEmail']);
+    });
+});

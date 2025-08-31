@@ -1,0 +1,157 @@
+NYSC ADMIN/STAFF LOGIN FLOW DOCUMENTATION
+=========================================
+
+This document describes the complete authentication and navigation flow for admin/staff users in the NYSC system.
+
+1. INITIAL APPLICATION LOAD
+============================
+File: project/app/page.tsx
+Method: HomePage component
+
+→ User visits root URL (/)
+→ useAuth hook checks authentication status
+→ If not authenticated: redirect to /login
+→ If authenticated as admin: redirect to /admin
+→ If authenticated as student: redirect to /student
+
+2. LOGIN PAGE
+=============
+File: project/app/login/page.tsx
+Method: LoginPage component
+
+→ User enters credentials (email for admin, matric number for student)
+→ Form validation using yup schema (loginSchema)
+→ onSubmit() calls useAuth.login(credentials)
+→ On success: redirect based on userType
+   - Admin: router.replace('/admin')
+   - Student: router.replace('/student')
+
+3. AUTHENTICATION SERVICE
+=========================
+File: project/services/auth.service.ts
+Method: login()
+
+→ Makes POST request to /api/nysc/login
+→ Receives AuthResponse with token, userType, user data
+→ Stores authentication data in localStorage/cookies
+
+4. BACKEND LOGIN ENDPOINT
+========================
+File: app/Http/Controllers/NyscAuthController.php
+Method: login()
+Route: POST /api/nysc/login
+
+→ Validates credentials (email/password for staff)
+→ Checks Staff model for matching email
+→ Verifies password using Hash::check()
+→ Creates Sanctum token with 'nysc-admin' ability
+→ Loads staff relationships (contacts, workProfiles)
+→ Returns response with:
+   - token: Sanctum authentication token
+   - userType: 'admin'
+   - user: Staff data with roles and permissions
+
+5. AUTHENTICATION CONTEXT
+========================
+File: project/contexts/AuthContext.tsx
+Method: login(), initializeAuth()
+
+→ login() function:
+   - Calls authService.login()
+   - Gets role and permissions for admin users
+   - Stores auth data using authService.storeAuthData()
+   - Updates context state with user, userType, userRole, userPermissions
+   - Starts session monitoring
+
+→ initializeAuth() function:
+   - Runs on app startup
+   - Checks for stored authentication data
+   - Verifies token with backend
+   - Sets user context if valid
+   - Redirects to login if session expired
+
+6. PROTECTED ROUTES
+==================
+File: project/components/common/ProtectedRoute.tsx
+Component: ProtectedRoute
+
+→ Wraps admin pages to ensure authentication
+→ Checks isAuthenticated and userType
+→ Redirects to /login if not authenticated
+→ Redirects to appropriate dashboard based on userType
+
+7. ADMIN DASHBOARD
+=================
+File: project/app/admin/dashboard/page.tsx
+Component: AdminDashboard
+
+→ Wrapped in ProtectedRoute with userType="admin"
+→ Renders Sidebar and Navbar components
+→ Displays dashboard statistics and management tools
+→ Shows user role and permissions
+→ Fetches dashboard data from backend APIs
+
+8. BACKEND MIDDLEWARE
+====================
+File: app/Http/Middleware/AdminMiddleware.php
+Method: handle()
+
+→ Validates user is authenticated (Auth::user())
+→ Checks if user is staff with admin role
+→ Verifies staff has 'admin' role in exeatRoles
+→ Returns 403 if not authorized
+
+9. API ROUTES PROTECTION
+=======================
+File: routes/nysc.php
+Middleware: auth:sanctum, admin
+
+→ Admin routes protected with auth:sanctum middleware
+→ Additional admin middleware for role verification
+→ Routes include:
+   - Dashboard data: GET /api/nysc/admin/dashboard
+   - Student management: GET /api/nysc/admin/students
+   - Payment management: GET /api/nysc/admin/payments
+   - Settings: POST /api/nysc/admin/settings
+
+10. SESSION MANAGEMENT
+=====================
+File: project/contexts/AuthContext.tsx
+Methods: startSessionMonitoring(), checkSessionExpiry()
+
+→ Monitors session expiry using timers
+→ Automatically logs out on token expiration
+→ Refreshes token validation periodically
+→ Clears stored data on logout
+
+COMPLETE FLOW SUMMARY:
+=====================
+
+1. User visits application → HomePage checks auth status
+2. Not authenticated → Redirect to /login
+3. User enters admin credentials → LoginPage validates and submits
+4. Backend NyscAuthController validates staff credentials
+5. Creates Sanctum token and returns user data
+6. Frontend AuthContext stores auth data and updates state
+7. Redirect to /admin dashboard
+8. ProtectedRoute validates admin access
+9. AdminDashboard renders with Sidebar/Navbar
+10. All subsequent API calls include Bearer token
+11. Backend middleware validates token and admin role
+12. Session monitoring maintains authentication state
+
+KEY COMPONENTS:
+==============
+- AuthContext: Central authentication state management
+- ProtectedRoute: Route-level access control
+- authService: API communication layer
+- NyscAuthController: Backend authentication logic
+- AdminMiddleware: API route protection
+- Sanctum tokens: Stateless authentication mechanism
+
+ERROR HANDLING:
+==============
+- Invalid credentials: Toast error message
+- Expired tokens: Automatic logout and redirect
+- Unauthorized access: 403 response with error message
+- Network errors: Retry mechanisms and user feedback
