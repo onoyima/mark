@@ -184,6 +184,19 @@ class NyscPaymentController extends Controller
                     $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)
                                                       ->where('status', 'pending')
                                                       ->first();
+                    
+                    // Check if temp submission has expired
+                    if ($tempSubmission && $tempSubmission->hasExpired()) {
+                        Log::info('Temp submission expired during payment verification, using fallback', [
+                            'session_id' => $payment->session_id,
+                            'student_id' => $payment->student_id,
+                            'payment_reference' => $payment->payment_reference
+                        ]);
+                        
+                        // Delete expired submission and set to null to trigger fallback
+                        $tempSubmission->delete();
+                        $tempSubmission = null;
+                    }
                 }
                 
                 // If temp submission not found, try to find any temp submission for this student
@@ -191,6 +204,18 @@ class NyscPaymentController extends Controller
                     $tempSubmission = NyscTempSubmission::where('student_id', $payment->student_id)
                                                       ->orderBy('created_at', 'desc')
                                                       ->first();
+                    
+                    // Check if this fallback submission has also expired
+                    if ($tempSubmission && $tempSubmission->hasExpired()) {
+                        Log::info('Fallback temp submission also expired, using data reconstruction', [
+                            'student_id' => $payment->student_id,
+                            'payment_reference' => $payment->payment_reference
+                        ]);
+                        
+                        // Delete expired submission and set to null to trigger data reconstruction
+                        $tempSubmission->delete();
+                        $tempSubmission = null;
+                    }
                 }
                 
                 // If still no temp submission, try to reconstruct data from Student and StudentAcademic
