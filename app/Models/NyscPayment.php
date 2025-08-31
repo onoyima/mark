@@ -44,7 +44,7 @@ class NyscPayment extends Model
      */
     public function studentNysc()
     {
-        return $this->belongsTo(Studentnysc::class, 'student_nysc_id');
+        return $this->belongsTo(StudentNysc::class, 'student_nysc_id');
     }
     
     /**

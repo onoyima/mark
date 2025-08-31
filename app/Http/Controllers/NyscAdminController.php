@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use App\Models\NyscPayment;
 use App\Models\NyscTempSubmission;
 use App\Models\Staff;
@@ -28,7 +28,7 @@ class NyscAdminController extends Controller
     public function dashboard(): \Illuminate\Http\JsonResponse
     {
         // Get all submitted student data
-        $students = Studentnysc::where('is_submitted', true)
+        $students = StudentNysc::where('is_submitted', true)
             ->with(['student', 'payments' => function($query) {
                 $query->where('status', 'successful');
             }])
@@ -163,7 +163,7 @@ class NyscAdminController extends Controller
      */
     public function updateStudent(Request $request, $studentId): \Illuminate\Http\JsonResponse
     {
-        $nysc = Studentnysc::where('student_id', $studentId)->first();
+        $nysc = StudentNysc::where('student_id', $studentId)->first();
         
         if (!$nysc) {
             return response()->json([
@@ -217,7 +217,7 @@ class NyscAdminController extends Controller
      */
     public function export($format)
     {
-        $students = Studentnysc::where('is_submitted', true)
+        $students = StudentNysc::where('is_submitted', true)
             ->with(['student', 'payments' => function($query) {
                 $query->where('status', 'successful')->orderBy('payment_date', 'desc');
             }])
@@ -299,7 +299,7 @@ class NyscAdminController extends Controller
             // Calculate statistics from actual payment records
             $allPayments = \App\Models\NyscPayment::where('status', 'successful')->get();
             $totalAmount = $allPayments->sum('amount');
-            $standardFeeCount = $allPayments->where('amount', 500)->count();
+            $standardFeeCount = $allPayments->where('amount', 1000)->count();
             $lateFeeCount = $allPayments->where('amount', 10000)->count();
             
             return response()->json([
@@ -336,7 +336,7 @@ class NyscAdminController extends Controller
     {
         $isOpen = AdminSetting::get('system_open', true);
         $deadline = AdminSetting::get('payment_deadline', now()->addDays(30));
-        $paymentAmount = AdminSetting::get('payment_amount', 500);
+        $paymentAmount = AdminSetting::get('payment_amount', 1000);
         $latePaymentFee = AdminSetting::get('late_payment_fee', 10000);
         
         return [
@@ -446,7 +446,7 @@ class NyscAdminController extends Controller
      */
     public function getStudents(Request $request): \Illuminate\Http\JsonResponse
     {
-        $query = Studentnysc::where('is_submitted', true)->with('student');
+        $query = StudentNysc::where('is_submitted', true)->with('student');
         
         // Apply search filter
         if ($request->has('search') && $request->search) {
@@ -851,7 +851,7 @@ class NyscAdminController extends Controller
     public function getAllStudents(): \Illuminate\Http\JsonResponse
     {
         try {
-            $students = Studentnysc::with(['student', 'payments' => function($query) {
+            $students = StudentNysc::with(['student', 'payments' => function($query) {
                 $query->where('status', 'successful');
             }])
             ->orderBy('created_at', 'desc')
@@ -906,8 +906,8 @@ class NyscAdminController extends Controller
     public function getStudentStats(): \Illuminate\Http\JsonResponse
     {
         try {
-            $totalStudents = Studentnysc::where('is_submitted', true)->count();
-            $paidStudents = Studentnysc::where('is_submitted', true)->where('is_paid', true)->count();
+            $totalStudents = StudentNysc::where('is_submitted', true)->count();
+            $paidStudents = StudentNysc::where('is_submitted', true)->where('is_paid', true)->count();
             $pendingPayments = $totalStudents - $paidStudents;
             
             return response()->json([
@@ -934,7 +934,7 @@ class NyscAdminController extends Controller
     public function getStudentDetails(string $id): \Illuminate\Http\JsonResponse
     {
         try {
-            $student = Studentnysc::with(['student', 'payments' => function($query) {
+            $student = StudentNysc::with(['student', 'payments' => function($query) {
                 $query->orderBy('created_at', 'desc');
             }])
             ->where('student_id', $id)
@@ -1327,7 +1327,7 @@ class NyscAdminController extends Controller
      */
     private function getStudentNyscExportData(array $filters): array
     {
-        $query = Studentnysc::with(['student', 'payments']);
+        $query = StudentNysc::with(['student', 'payments']);
         
         // Apply filters
         if (!empty($filters['department'])) {
@@ -2076,7 +2076,7 @@ class NyscAdminController extends Controller
     public function exportStudents(Request $request, $format = 'excel')
     {
         try {
-            $query = Studentnysc::with(['student', 'payments' => function($q) {
+            $query = StudentNysc::with(['student', 'payments' => function($q) {
                 $q->where('status', 'successful');
             }]);
 
@@ -2133,7 +2133,7 @@ class NyscAdminController extends Controller
     public function getStudentsData(Request $request)
     {
         try {
-            $query = Studentnysc::with(['student', 'payments' => function($q) {
+            $query = StudentNysc::with(['student', 'payments' => function($q) {
                 $q->where('status', 'successful');
             }]);
 

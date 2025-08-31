@@ -4,7 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Models\NyscPayment;
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use App\Models\NyscTempSubmission;
 use App\Models\Student;
 use App\Models\StudentAcademic;
@@ -81,7 +81,7 @@ class RecoverNyscPayments extends Command
                     DB::beginTransaction();
                     
                     // Create or update the NYSC record
-                    $nysc = Studentnysc::updateOrCreate(
+                    $nysc = StudentNysc::updateOrCreate(
                         ['student_id' => $payment->student_id],
                         array_merge($studentData, [
                             'is_paid' => true,

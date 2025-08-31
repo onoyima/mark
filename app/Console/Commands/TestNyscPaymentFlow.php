@@ -7,7 +7,7 @@ use App\Models\Student;
 use App\Models\StudentAcademic;
 use App\Models\NyscTempSubmission;
 use App\Models\NyscPayment;
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -149,7 +149,7 @@ class TestNyscPaymentFlow extends Command
 
         // Verify results
         $payment->refresh();
-        $nysc = Studentnysc::where('student_id', $student->id)->latest()->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->latest()->first();
         $tempSubmission->refresh();
 
         if ($payment->status === 'successful' && $nysc && $nysc->is_paid) {
@@ -200,7 +200,7 @@ class TestNyscPaymentFlow extends Command
 
         // Verify results
         $payment->refresh();
-        $nysc = Studentnysc::where('student_id', $student->id)->latest()->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->latest()->first();
 
         if ($payment->status === 'successful' && $nysc && $nysc->is_paid) {
             $this->info('✅ Missing temp submission test passed');
@@ -230,7 +230,7 @@ class TestNyscPaymentFlow extends Command
         ]);
 
         // Create corresponding NYSC record
-        $nysc = Studentnysc::create([
+        $nysc = StudentNysc::create([
             'student_id' => $student->id,
             'first_name' => $student->first_name,
             'last_name' => $student->last_name,
@@ -361,7 +361,7 @@ class TestNyscPaymentFlow extends Command
             }
 
             // Create or update the NYSC record
-            $nysc = Studentnysc::updateOrCreate(
+            $nysc = StudentNysc::updateOrCreate(
                 ['student_id' => $tempSubmission->student_id],
                 array_merge($nyscData, [
                     'is_paid' => true,
@@ -403,7 +403,7 @@ class TestNyscPaymentFlow extends Command
             NyscTempSubmission::where('id', $tempId)->delete();
         }
         if ($nyscId) {
-            Studentnysc::where('id', $nyscId)->delete();
+            StudentNysc::where('id', $nyscId)->delete();
         }
         $this->info('Test data cleaned up');
     }

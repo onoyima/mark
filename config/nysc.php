@@ -17,7 +17,7 @@ return [
     
     // Payment Settings
     'payment_deadline' => env('NYSC_PAYMENT_DEADLINE', now()->addDays(30)),
-    'standard_fee' => env('NYSC_STANDARD_FEE', 500),
+    'standard_fee' => env('NYSC_STANDARD_FEE', 1000),
     'late_fee' => env('NYSC_LATE_FEE', 10000),
     
     // Export Settings

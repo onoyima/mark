@@ -9,7 +9,7 @@ use App\Models\StudentMedical;
 use App\Models\Department;
 use App\Models\State;
 use App\Models\StudyMode;
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use App\Models\NyscPayment;
 use App\Models\NyscTempSubmission;
 use Illuminate\Http\Request;
@@ -110,7 +110,7 @@ class NyscStudentController extends Controller
         $student = Auth::user();
         
         // Get NYSC record for this student
-        $nysc = Studentnysc::where('student_id', $student->id)->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->first();
         
         // Count submissions to student_nysc table (how many times form was submitted)
         $submissionCount = $nysc ? ($nysc->is_submitted ? 1 : 0) : 0;
@@ -169,7 +169,7 @@ class NyscStudentController extends Controller
         ]);
 
         // Get NYSC record
-        $nysc = Studentnysc::where('student_id', $student->id)->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->first();
 
         if (!$nysc) {
             return response()->json([
@@ -304,7 +304,7 @@ class NyscStudentController extends Controller
         ]);
 
         // Verify the NYSC record belongs to the authenticated student
-        $nysc = Studentnysc::where('id', $validated['student_nysc_id'])
+        $nysc = StudentNysc::where('id', $validated['student_nysc_id'])
                           ->where('student_id', $student->id)
                           ->first();
 
@@ -368,7 +368,7 @@ class NyscStudentController extends Controller
         $student = Auth::user();
 
         // Get NYSC record
-        $nysc = Studentnysc::where('student_id', $student->id)->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->first();
 
         if (!$nysc) {
             return response()->json([
@@ -515,7 +515,7 @@ class NyscStudentController extends Controller
         $student = $request->user();
 
         // Get the student's NYSC record
-        $studentNysc = Studentnysc::where('student_id', $student->id)->first();
+        $studentNysc = StudentNysc::where('student_id', $student->id)->first();
 
         if (!$studentNysc) {
             return response()->json([
@@ -582,7 +582,7 @@ class NyscStudentController extends Controller
         $student = $request->user();
 
         // Get the student's NYSC record with relationships
-        $studentNysc = Studentnysc::with(['latestSuccessfulPayment'])
+        $studentNysc = StudentNysc::with(['latestSuccessfulPayment'])
                                  ->where('student_id', $student->id)
                                  ->first();
 
@@ -745,7 +745,7 @@ class NyscStudentController extends Controller
             }
 
             // Update NYSC record if it exists
-            $studentNysc = Studentnysc::where('student_id', $student->id)->first();
+            $studentNysc = StudentNysc::where('student_id', $student->id)->first();
             if ($studentNysc) {
                 $nyscUpdateData = [];
                 if ($request->has('bio')) {

@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use App\Models\NyscPayment;
 use App\Models\NyscTempSubmission;
 use Illuminate\Http\Request;
@@ -53,7 +53,7 @@ class NyscPaymentController extends Controller
         }
         
         // Get payment amounts from admin settings
-        $paymentAmount = \App\Models\AdminSetting::get('payment_amount', 500);
+        $paymentAmount = \App\Models\AdminSetting::get('payment_amount', 1000);
         $latePaymentFee = \App\Models\AdminSetting::get('late_payment_fee', 10000);
         $deadline = \App\Models\AdminSetting::get('payment_deadline', now()->addDays(30));
         
@@ -160,7 +160,7 @@ class NyscPaymentController extends Controller
                 // Check if payment has already been processed successfully
                 if ($payment->status === 'successful') {
                     // Payment already processed, return success response
-                    $nysc = Studentnysc::where('student_id', $payment->student_id)->first();
+                    $nysc = StudentNysc::where('student_id', $payment->student_id)->first();
                     
                     return response()->json([
                         'success' => true,
@@ -273,7 +273,7 @@ class NyscPaymentController extends Controller
                     }
                     
                     // Create or update the NYSC record
-                    $nysc = Studentnysc::updateOrCreate(
+                    $nysc = StudentNysc::updateOrCreate(
                         ['student_id' => $tempSubmission->student_id],
                         array_merge($nyscData, [
                             'is_paid' => true,
@@ -396,7 +396,7 @@ class NyscPaymentController extends Controller
                         $nyscData = $tempSubmission->toStudentNyscData();
                         
                         // Create or update the NYSC record
-                        $nysc = Studentnysc::updateOrCreate(
+                        $nysc = StudentNysc::updateOrCreate(
                             ['student_id' => $tempSubmission->student_id],
                             array_merge($nyscData, [
                                 'is_paid' => true,
@@ -577,7 +577,7 @@ class NyscPaymentController extends Controller
         try {
             $student = $request->user();
             
-            $studentNysc = Studentnysc::where('student_id', $student->id)
+            $studentNysc = StudentNysc::where('student_id', $student->id)
                 ->where('is_submitted', true)
                 ->first();
 

@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Student;
 use App\Models\StudentAcademic;
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use App\Models\Staff;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -126,7 +126,7 @@ class NyscAuthController extends Controller
 
                 // Load related data
                 $student->load(['contacts', 'medicals']);
-                $nyscData = Studentnysc::where('student_id', $student->id)->first();
+                $nyscData = StudentNysc::where('student_id', $student->id)->first();
 
                 return response()->json([
                     'token' => $token,
@@ -194,7 +194,7 @@ class NyscAuthController extends Controller
             // Student user
             $academic = StudentAcademic::where('student_id', $user->id)->first();
             $user->load(['contacts', 'medicals']);
-            $nyscData = Studentnysc::where('student_id', $user->id)->first();
+            $nyscData = StudentNysc::where('student_id', $user->id)->first();
 
             return response()->json([
                 'userType' => 'student',

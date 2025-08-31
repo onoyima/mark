@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Studentnysc;
+use App\Models\StudentNysc;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -20,7 +20,7 @@ class NyscDocumentController extends Controller
         $student = Auth::user();
         
         // Get NYSC record
-        $nysc = Studentnysc::where('student_id', $student->id)->first();
+        $nysc = StudentNysc::where('student_id', $student->id)->first();
         
         if (!$nysc) {
             return response()->json([
@@ -66,7 +66,7 @@ class NyscDocumentController extends Controller
         ]);
         
         // Get or create NYSC record
-        $nysc = Studentnysc::firstOrCreate(
+        $nysc = StudentNysc::firstOrCreate(
             ['student_id' => $student->id],
             ['is_submitted' => false, 'is_paid' => false]
         );
