@@ -75,7 +75,8 @@ class NyscPaymentController extends Controller
                 'email' => $student->username,
                 'amount' => $amount * 100, // Paystack expects amount in kobo
                 'reference' => $reference,
-                'callback_url' => config('app.frontend_url', 'http://localhost:3000') . '/student/payment?status=success',
+                'callback_url' => config('app.frontend_url', 'https://studentupdate.vercel.app') . '/student/payment?status=success&reference=' . $reference,
+                // 'callback_url' => config('app.frontend_url', 'http://localhost:3000') . '/student/payment?status=success&reference=' . $reference,
                 'metadata' => [
                     'student_id' => $student->id,
                     'session_id' => $sessionId,
