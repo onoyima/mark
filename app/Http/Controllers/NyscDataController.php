@@ -32,8 +32,10 @@ class NyscDataController extends Controller
                 return Excel::download(new NyscExport, $fileName . '.xlsx');
             case 'pdf':
                 $data = StudentNysc::all();
-                $pdf = Pdf::loadView('exports.nysc_pdf', ['data' => $data]);
-                return $pdf->download($fileName . '.pdf');
+                // Temporary workaround: return HTML view for PDF printing
+                return view('exports.nysc_pdf', ['data' => $data])
+                    ->header('Content-Type', 'text/html')
+                    ->header('Content-Disposition', 'inline; filename="' . $fileName . '.html"');
             default:
                 return response()->json(['error' => 'Invalid format'], Response::HTTP_BAD_REQUEST);
         }

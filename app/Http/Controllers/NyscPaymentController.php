@@ -308,9 +308,8 @@ class NyscPaymentController extends Controller
                     );
 
                     // Update the payment record
-                    // Note: student_nysc_id foreign key constraint is incorrectly set to reference students table
-                    // We'll leave it as NULL for now to avoid constraint violations
                     $payment->update([
+                        'student_nysc_id' => $nysc->id,
                         'status' => 'successful',
                         'payment_date' => now(),
                         'transaction_id' => $responseData['data']['id'] ?? null,
@@ -554,6 +553,37 @@ class NyscPaymentController extends Controller
                 ], 404);
             }
 
+            // Get student information from student table or NYSC record
+            $studentInfo = null;
+            
+            // First try to get from StudentNysc table using student_id
+            $nyscRecord = \App\Models\StudentNysc::where('student_id', $payment->student_id)->first();
+            if ($nyscRecord) {
+                $studentInfo = [
+                    'full_name' => trim(($nyscRecord->fname ?? '') . ' ' . ($nyscRecord->mname ?? '') . ' ' . ($nyscRecord->lname ?? '')),
+                    'first_name' => $nyscRecord->fname,
+                    'middle_name' => $nyscRecord->mname,
+                    'last_name' => $nyscRecord->lname,
+                    'matric_number' => $nyscRecord->matric_no,
+                    'email' => $nyscRecord->email,
+                ];
+            } else {
+                // Fallback to student table and academic info
+                $studentRecord = \App\Models\Student::find($payment->student_id);
+                $academicRecord = \App\Models\StudentAcademic::where('student_id', $payment->student_id)->first();
+                
+                if ($studentRecord) {
+                    $studentInfo = [
+                        'full_name' => trim(($studentRecord->first_name ?? '') . ' ' . ($studentRecord->middle_name ?? '') . ' ' . ($studentRecord->last_name ?? '')),
+                        'first_name' => $studentRecord->first_name,
+                        'middle_name' => $studentRecord->middle_name,
+                        'last_name' => $studentRecord->last_name,
+                        'matric_number' => $academicRecord->matric_no ?? '',
+                        'email' => $studentRecord->email,
+                    ];
+                }
+            }
+
             $receiptData = [
                 'payment' => [
                     'id' => $payment->id,
@@ -564,16 +594,7 @@ class NyscPaymentController extends Controller
                     'transaction_id' => $payment->transaction_id,
                     'payment_method' => $payment->payment_method,
                 ],
-                'student' => $payment->studentNysc ? [
-                    'full_name' => trim(($payment->studentNysc->fname ?? '') . ' ' . ($payment->studentNysc->mname ?? '') . ' ' . ($payment->studentNysc->lname ?? '')),
-                    'matric_number' => $payment->studentNysc->matric_no,
-                    'username' => $payment->studentNysc->username,
-                    'email' => $payment->studentNysc->email,
-                    'phone' => $payment->studentNysc->phone,
-                    'institution' => 'Benue State University', // Default institution
-                    'course_of_study' => $payment->studentNysc->department,
-                    'year_of_graduation' => $payment->studentNysc->graduation_year,
-                ] : null,
+                'student' => $studentInfo,
                 'receipt_generated_at' => now(),
             ];
 

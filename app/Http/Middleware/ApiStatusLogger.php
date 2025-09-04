@@ -25,7 +25,7 @@ class ApiStatusLogger
         if (strpos($request->path(), 'api/') === 0) {
             $endpoint = '/' . $request->path();
             $statusCode = $response->getStatusCode();
-            $result = $statusCode . ' ' . ($response->exception ? $response->exception->getMessage() : $response->getContent());
+            $result = $statusCode . ' ' . $response->getContent();
             // Try to get the controller file name from the route action
             $route = $request->route();
             $controllerFile = null;

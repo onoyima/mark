@@ -107,31 +107,39 @@ class NyscStudentController extends Controller
      */
     public function getAnalytics(): \Illuminate\Http\JsonResponse
     {
-        $student = Auth::user();
-        
-        // Get NYSC record for this student
-        $nysc = StudentNysc::where('student_id', $student->id)->first();
-        
-        // Count submissions to student_nysc table (how many times form was submitted)
-        $submissionCount = $nysc ? ($nysc->is_submitted ? 1 : 0) : 0;
-        
-        // Sum all successful payments for this student
-        $totalPayments = 0;
-        if ($nysc) {
+        try {
+            $student = Auth::user();
+            
+            // Get NYSC record for this student with optimized query
+            $nysc = StudentNysc::where('student_id', $student->id)
+                ->select('id', 'is_submitted', 'created_at', 'updated_at')
+                ->first();
+            
+            // Count submissions to student_nysc table (how many times form was submitted)
+            $submissionCount = $nysc ? ($nysc->is_submitted ? 1 : 0) : 0;
+            
+            // Sum all successful payments for this student using optimized query
             $totalPayments = NyscPayment::where('student_id', $student->id)
                 ->where('status', 'successful')
-                ->sum('amount');
+                ->sum('amount') ?? 0;
+            
+            // Count how many times student has updated their Student Data
+            $dataUpdates = $nysc ? $nysc->updated_at->diffInDays($nysc->created_at) + 1 : 0;
+            
+            return response()->json([
+                'submissionCount' => $submissionCount,
+                'totalPayments' => $totalPayments,
+                'dataUpdates' => $dataUpdates
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Student analytics loading failed: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load analytics data',
+                'error' => $e->getMessage()
+            ], 500);
         }
-        
-        // Count how many times student has updated their Student Data
-        $dataUpdates = $nysc ? $nysc->updated_at->diffInDays($nysc->created_at) + 1 : 0;
-        
-        return response()->json([
-            'submissionCount' => $submissionCount,
-            'totalPayments' => $totalPayments,
-            'dataUpdates' => $dataUpdates
-        ]);
-}
+    }
 
 
     /**

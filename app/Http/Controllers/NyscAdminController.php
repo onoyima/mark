@@ -27,96 +27,113 @@ class NyscAdminController extends Controller
      */
     public function dashboard(): \Illuminate\Http\JsonResponse
     {
-        // Get all submitted student data
-        $students = StudentNysc::where('is_submitted', true)
-            ->with(['student', 'payments' => function($query) {
-                $query->where('status', 'successful');
-            }])
-            ->orderBy('created_at', 'desc')
-            ->get();
-        
-        // Get temp submissions count
-        $tempSubmissions = \App\Models\NyscTempSubmission::where('status', 'pending')->count();
-        
-        // Basic statistics
-        $totalStudents = $students->count();
-        $totalPaid = $students->where('is_paid', true)->count();
-        $totalUnpaid = $totalStudents - $totalPaid;
-        
-        // Department breakdown
-        $departmentStats = $students->groupBy('department')
-            ->map(function ($group, $department) use ($totalStudents) {
-                $count = $group->count();
-                return [
-                    'department' => $department ?: 'Unknown',
-                    'count' => $count,
-                    'percentage' => $totalStudents > 0 ? round(($count / $totalStudents) * 100, 1) : 0
-                ];
-            })->values();
-        
-        // Gender breakdown
-        $genderStats = $students->groupBy('gender')
-            ->map(function ($group, $gender) use ($totalStudents) {
-                $count = $group->count();
-                return [
-                    'gender' => ucfirst($gender ?: 'Unknown'),
-                    'count' => $count,
-                    'percentage' => $totalStudents > 0 ? round(($count / $totalStudents) * 100, 1) : 0
-                ];
-            })->values();
-        
-        // Payment analytics
-        $allPayments = \App\Models\NyscPayment::where('status', 'successful')->get();
-        $totalRevenue = $allPayments->sum('amount');
-        $averageAmount = $allPayments->count() > 0 ? $allPayments->avg('amount') : 0;
-        $successRate = $totalStudents > 0 ? round(($totalPaid / $totalStudents) * 100, 1) : 0;
-        
-        // Monthly payment trends (last 7 months)
-        $monthlyTrends = [];
-        for ($i = 6; $i >= 0; $i--) {
-            $date = now()->subMonths($i);
-            $monthPayments = $allPayments->filter(function($payment) use ($date) {
-                return $payment->payment_date && 
-                       $payment->payment_date->format('Y-m') === $date->format('Y-m');
-            });
+        try {
+            // Use database aggregation for better performance
+            $totalStudents = StudentNysc::where('is_submitted', true)->count();
+            $totalPaid = StudentNysc::where('is_submitted', true)->where('is_paid', true)->count();
+            $totalUnpaid = $totalStudents - $totalPaid;
             
-            $monthlyTrends[] = [
-                'month' => $date->format('M'),
-                'revenue' => $monthPayments->sum('amount'),
-                'count' => $monthPayments->count()
-            ];
+            // Get temp submissions count
+            $tempSubmissions = \App\Models\NyscTempSubmission::where('status', 'pending')->count();
+            
+            // Department breakdown using database aggregation
+            $departmentStats = StudentNysc::where('is_submitted', true)
+                ->selectRaw('department, COUNT(*) as count')
+                ->groupBy('department')
+                ->get()
+                ->map(function ($item) use ($totalStudents) {
+                    return [
+                        'department' => $item->department ?: 'Unknown',
+                        'count' => $item->count,
+                        'percentage' => $totalStudents > 0 ? round(($item->count / $totalStudents) * 100, 1) : 0
+                    ];
+                });
+            
+            // Gender breakdown using database aggregation
+            $genderStats = StudentNysc::where('is_submitted', true)
+                ->selectRaw('gender, COUNT(*) as count')
+                ->groupBy('gender')
+                ->get()
+                ->map(function ($item) use ($totalStudents) {
+                    return [
+                        'gender' => ucfirst($item->gender ?: 'Unknown'),
+                        'count' => $item->count,
+                        'percentage' => $totalStudents > 0 ? round(($item->count / $totalStudents) * 100, 1) : 0
+                    ];
+                });
+            
+            // Payment analytics using database aggregation
+            $paymentStats = \App\Models\NyscPayment::where('status', 'successful')
+                ->selectRaw('COUNT(*) as total_payments, SUM(amount) as total_revenue, AVG(amount) as average_amount')
+                ->first();
+            
+            $totalRevenue = $paymentStats->total_revenue ?? 0;
+            $averageAmount = $paymentStats->average_amount ?? 0;
+            $successRate = $totalStudents > 0 ? round(($totalPaid / $totalStudents) * 100, 1) : 0;
+        
+            // Monthly payment trends (last 7 months) using database aggregation
+            $monthlyTrends = [];
+            for ($i = 6; $i >= 0; $i--) {
+                $date = now()->subMonths($i);
+                $monthStart = $date->startOfMonth()->format('Y-m-d H:i:s');
+                $monthEnd = $date->endOfMonth()->format('Y-m-d H:i:s');
+                
+                $monthStats = \App\Models\NyscPayment::where('status', 'successful')
+                    ->whereBetween('payment_date', [$monthStart, $monthEnd])
+                    ->selectRaw('COUNT(*) as count, SUM(amount) as revenue')
+                    ->first();
+                
+                $monthlyTrends[] = [
+                    'month' => $date->format('M'),
+                    'revenue' => $monthStats->revenue ?? 0,
+                    'count' => $monthStats->count ?? 0
+                ];
+            }
+            
+            // Recent registrations (last 10) using efficient query
+            $recentRegistrations = StudentNysc::where('is_submitted', true)
+                ->with('student:id,fname,lname')
+                ->select('id', 'student_id', 'fname', 'lname', 'matric_no', 'department', 'is_paid', 'created_at')
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->map(function($student) {
+                    return [
+                        'id' => $student->student_id,
+                        'name' => trim(($student->fname ?? '') . ' ' . ($student->lname ?? '')),
+                        'matric_no' => $student->matric_no,
+                        'department' => $student->department,
+                        'is_paid' => $student->is_paid,
+                        'created_at' => $student->created_at
+                    ];
+                });
+        
+            return response()->json([
+                'totalStudents' => $totalStudents,
+                'confirmedData' => $totalStudents,
+                'completedPayments' => $totalPaid,
+                'pendingPayments' => $totalUnpaid,
+                'totalNyscSubmissions' => $totalStudents,
+                'totalTempSubmissions' => $tempSubmissions,
+                'recentRegistrations' => $recentRegistrations,
+                'departmentBreakdown' => $departmentStats,
+                'genderBreakdown' => $genderStats,
+                'paymentAnalytics' => [
+                    'totalRevenue' => $totalRevenue,
+                    'averageAmount' => round($averageAmount, 2),
+                    'successRate' => $successRate,
+                    'monthlyTrends' => $monthlyTrends
+                ],
+                'system_status' => $this->getSystemStatus(),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Dashboard data loading failed: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load dashboard data',
+                'error' => $e->getMessage()
+            ], 500);
         }
-        
-        // Recent registrations (last 10)
-        $recentRegistrations = $students->take(10)->map(function($student) {
-            return [
-                'id' => $student->student_id,
-                'name' => trim(($student->fname ?? '') . ' ' . ($student->lname ?? '')),
-                'matric_no' => $student->matric_no,
-                'department' => $student->department,
-                'is_paid' => $student->is_paid,
-                'created_at' => $student->created_at
-            ];
-        });
-        
-        return response()->json([
-            'totalStudents' => $totalStudents,
-            'confirmedData' => $totalStudents,
-            'completedPayments' => $totalPaid,
-            'pendingPayments' => $totalUnpaid,
-            'totalNyscSubmissions' => $totalStudents,
-            'totalTempSubmissions' => $tempSubmissions,
-            'recentRegistrations' => $recentRegistrations,
-            'departmentBreakdown' => $departmentStats,
-            'genderBreakdown' => $genderStats,
-            'paymentAnalytics' => [
-                'totalRevenue' => $totalRevenue,
-                'averageAmount' => round($averageAmount, 2),
-                'successRate' => $successRate,
-                'monthlyTrends' => $monthlyTrends
-            ],
-            'system_status' => $this->getSystemStatus(),
-        ]);
     }
     
     /**
@@ -738,14 +755,31 @@ class NyscAdminController extends Controller
                             continue;
                         }
 
-                        // Check if student already exists
+                        // Check if student exists in the main students table
                         $existingStudent = \App\Models\Student::where('matric_no', $studentData['matric_no'])->first();
-                        if ($existingStudent) {
-                            // Update existing student
-                            $existingStudent->update($studentData);
+                        if (!$existingStudent) {
+                            $errors[] = "Row {$rowNumber}: Student with matric number {$studentData['matric_no']} not found in system";
+                            $errorCount++;
+                            continue;
+                        }
+
+                        // Prepare data for student_nysc table
+                        $nyscData = array_merge($studentData, [
+                            'student_id' => $existingStudent->id,
+                            'is_submitted' => true,
+                            'is_paid' => false,
+                            'payment_amount' => null,
+                            'submission_date' => now(),
+                        ]);
+
+                        // Check if NYSC record already exists
+                        $existingNyscRecord = \App\Models\StudentNysc::where('student_id', $existingStudent->id)->first();
+                        if ($existingNyscRecord) {
+                            // Update existing NYSC record
+                            $existingNyscRecord->update($nyscData);
                         } else {
-                            // Create new student
-                            \App\Models\Student::create($studentData);
+                            // Create new NYSC record
+                            \App\Models\StudentNysc::create($nyscData);
                         }
 
                         $successCount++;
@@ -781,7 +815,7 @@ class NyscAdminController extends Controller
     }
 
     /**
-     * Download CSV template for student import
+     * Download CSV template for student NYSC data import
      *
      * @return \Illuminate\Http\Response
      */
@@ -789,24 +823,45 @@ class NyscAdminController extends Controller
     {
         $headers = [
             'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="student_import_template.csv"',
+            'Content-Disposition' => 'attachment; filename="student_nysc_import_template.csv"',
         ];
 
         $callback = function() {
             $file = fopen('php://output', 'w');
             
-            // Add headers
+            // Add headers for student_nysc table fields (exact match)
             fputcsv($file, [
-                'First Name', 'Last Name', 'Middle Name', 'Matric Number', 'Email', 'Phone',
-                'Gender', 'Date of Birth (YYYY-MM-DD)', 'State of Origin', 'LGA',
-                'Course of Study', 'Department', 'Graduation Year', 'CGPA', 'JAMB Number', 'Study Mode'
+                'matric_no', 'fname', 'lname', 'mname', 'gender', 'dob', 'marital_status',
+                'phone', 'email', 'address', 'state', 'lga', 'username', 'department',
+                'course_study', 'level', 'graduation_year', 'cgpa', 'jamb_no', 'study_mode'
             ]);
             
             // Add sample data
             fputcsv($file, [
-                'John', 'Doe', 'Smith', 'VUG/CSC/16/1001', 'john.doe@example.com', '08012345678',
-                'Male', '1995-05-15', 'Lagos', 'Ikeja', 'Computer Science', 'Computer Science',
-                '2020', '3.50', 'JAM123456789', 'full-time'
+                'VUG/CSC/16/1001', 'John', 'Doe', 'Smith', 'Male', '1995-05-15', 'Single',
+                '08012345678', 'john.doe@example.com', '123 Main St, Lagos', 'Lagos', 'Ikeja',
+                'john.doe', 'Computer Science', 'Computer Science', '400', '2020', '3.50',
+                'JAM123456789', 'Full Time'
+            ]);
+            
+            // Add instructions as comments
+            fputcsv($file, [
+                '# INSTRUCTIONS FOR STUDENT NYSC DATA IMPORT', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+            ]);
+            fputcsv($file, [
+                '# 1. Only students with existing matric_no in system will be processed', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+            ]);
+            fputcsv($file, [
+                '# 2. Students already in student_nysc table will be SKIPPED', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+            ]);
+            fputcsv($file, [
+                '# 3. Date format must be: YYYY-MM-DD (e.g., 1995-05-15)', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+            ]);
+            fputcsv($file, [
+                '# 4. Gender: Male/Female, Marital Status: Single/Married/Divorced/Widowed', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+            ]);
+            fputcsv($file, [
+                '# 5. Remove all instruction rows before uploading', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
             ]);
             
             fclose($file);
@@ -2001,7 +2056,7 @@ class NyscAdminController extends Controller
                 'countdown_message' => 'sometimes|string|max:1000',
                 'system_open' => 'sometimes|boolean',
                 'settings' => 'sometimes|array',
-                'settings.*.value' => 'required',
+                'settings.*.value' => 'sometimes|nullable',
                 'settings.*.type' => 'sometimes|in:string,number,boolean,json,date',
                 'settings.*.category' => 'sometimes|in:payment,countdown,system,general,email'
             ]);
@@ -2037,19 +2092,21 @@ class NyscAdminController extends Controller
 
             // Handle structured settings update
             if ($request->has('settings')) {
-                $settings = $validated['settings'];
+                $settings = $request->input('settings', []);
                 
                 foreach ($settings as $key => $data) {
                     // Additional validation for specific settings
-                    $this->validateSpecificSetting($key, $data['value']);
-                    
-                    AdminSetting::set(
-                        $key,
-                        $data['value'],
-                        $data['type'] ?? 'string',
-                        $data['description'] ?? $this->getSettingDescription($key),
-                        $data['category'] ?? 'general'
-                    );
+                    if (isset($data['value'])) {
+                        $this->validateSpecificSetting($key, $data['value']);
+                        
+                        AdminSetting::set(
+                            $key,
+                            $data['value'],
+                            $data['type'] ?? 'string',
+                            $data['description'] ?? $this->getSettingDescription($key),
+                            $data['category'] ?? 'general'
+                        );
+                    }
                 }
             }
 
