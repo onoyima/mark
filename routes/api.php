@@ -16,6 +16,9 @@ use App\Http\Controllers\CommunicationController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ChatController;
 
+use App\Http\Controllers\NyscDataController;
+
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -138,3 +141,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/chats/{id}/messages', [ChatController::class, 'sendMessage']);
 });
 
+
+
+
+Route::prefix('nysc')->group(function () {
+    Route::get('/', [NyscDataController::class, 'index']); // Fetch all records
+    Route::get('/export/{format}', [NyscDataController::class, 'export']); // Export as CSV, Excel, PDF
+});

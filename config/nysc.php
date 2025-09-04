@@ -15,10 +15,8 @@ return [
     // System Status
     'system_open' => env('NYSC_SYSTEM_OPEN', true),
     
-    // Payment Settings
-    'payment_deadline' => env('NYSC_PAYMENT_DEADLINE', now()->addDays(30)),
-    'standard_fee' => env('NYSC_STANDARD_FEE', 1000),
-    'late_fee' => env('NYSC_LATE_FEE', 10000),
+    // Payment Settings - All payment settings are now managed through AdminSetting model
+    // 'payment_deadline', 'payment_amount', and 'late_payment_fee' are stored in admin_settings table
     
     // Export Settings
     'export_chunk_size' => env('NYSC_EXPORT_CHUNK_SIZE', 1000),

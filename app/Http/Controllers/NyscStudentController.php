@@ -123,7 +123,7 @@ class NyscStudentController extends Controller
                 ->sum('amount');
         }
         
-        // Count how many times student has updated their NYSC data
+        // Count how many times student has updated their Student Data
         $dataUpdates = $nysc ? $nysc->updated_at->diffInDays($nysc->created_at) + 1 : 0;
         
         return response()->json([

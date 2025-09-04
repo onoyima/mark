@@ -23,7 +23,7 @@ class NyscPaymentController extends Controller
     public function initiatePayment(Request $request): \Illuminate\Http\JsonResponse
     {
         $student = Auth::user();
-        
+
         // Validate session_id is provided
         $sessionId = $request->input('session_id');
         if (!$sessionId) {
@@ -31,19 +31,19 @@ class NyscPaymentController extends Controller
                 'message' => 'Session ID is required for payment initiation.',
             ], 400);
         }
-        
+
         // Find the temporary submission
         $tempSubmission = NyscTempSubmission::where('session_id', $sessionId)
                                           ->where('student_id', $student->id)
                                           ->where('status', 'pending')
                                           ->first();
-        
+
         if (!$tempSubmission) {
             return response()->json([
                 'message' => 'Invalid session or submission has expired. Please confirm your details again.',
             ], 400);
         }
-        
+
         // Check if submission has expired
         if ($tempSubmission->hasExpired()) {
             $tempSubmission->delete();
@@ -51,22 +51,22 @@ class NyscPaymentController extends Controller
                 'message' => 'Submission has expired. Please confirm your details again.',
             ], 400);
         }
-        
+
         // Get payment amounts from admin settings
-        $paymentAmount = \App\Models\AdminSetting::get('payment_amount', 1000);
-        $latePaymentFee = \App\Models\AdminSetting::get('late_payment_fee', 10000);
-        $deadline = \App\Models\AdminSetting::get('payment_deadline', now()->addDays(30));
-        
+        $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
+        $latePaymentFee = \App\Models\AdminSetting::get('late_payment_fee');
+        $deadline = \App\Models\AdminSetting::get('payment_deadline');
+
         // Determine fee based on deadline
         $amount = now()->lt($deadline) ? $paymentAmount : $latePaymentFee;
-        
+
         // Generate a unique reference
-        $reference = 'VUST-' . Str::random(10);
-        
+        $reference = '01VUP-' . Str::random(10);
+
         // Prepare Paystack request
         $paystackUrl = 'https://api.paystack.co/transaction/initialize';
         $paystackKey = config('services.paystack.secret_key');
-        
+
         try {
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $paystackKey,
@@ -83,9 +83,9 @@ class NyscPaymentController extends Controller
                     'matric_no' => $tempSubmission->matric_no,
                 ],
             ]);
-            
+
             $responseData = $response->json();
-            
+
             if ($response->successful() && isset($responseData['data']['authorization_url'])) {
                 // Create payment record in nysc_payments table
                 NyscPayment::create([
@@ -99,7 +99,7 @@ class NyscPaymentController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
-                
+
                 return response()->json([
                     'message' => 'Payment initiated successfully.',
                     'payment_url' => $responseData['data']['authorization_url'],
@@ -119,7 +119,7 @@ class NyscPaymentController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Verify payment for NYSC verification
      *
@@ -129,40 +129,40 @@ class NyscPaymentController extends Controller
     public function verifyPayment(Request $request): \Illuminate\Http\JsonResponse
     {
         $reference = $request->reference ?? $request->query('reference');
-        
+
         if (!$reference) {
             return response()->json([
                 'message' => 'Payment reference is required.',
             ], 400);
         }
-        
+
         // Verify payment with Paystack
         $paystackUrl = 'https://api.paystack.co/transaction/verify/' . $reference;
         $paystackKey = config('services.paystack.secret_key');
-        
+
         try {
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $paystackKey,
                 'Content-Type' => 'application/json',
             ])->get($paystackUrl);
-            
+
             $responseData = $response->json();
-            
+
             if ($response->successful() && isset($responseData['data']['status']) && $responseData['data']['status'] === 'success') {
                 // Find the payment record by reference in nysc_payments table
                 $payment = NyscPayment::where('payment_reference', $reference)->first();
-                
+
                 if (!$payment) {
                     return response()->json([
                         'message' => 'Invalid payment reference.',
                     ], 400);
                 }
-                
+
                 // Check if payment has already been processed successfully
                 if ($payment->status === 'successful') {
                     // Payment already processed, return success response
                     $nysc = StudentNysc::where('student_id', $payment->student_id)->first();
-                    
+
                     return response()->json([
                         'success' => true,
                         'message' => 'Payment verified and data submitted successfully.',
@@ -178,14 +178,14 @@ class NyscPaymentController extends Controller
                         ]
                     ]);
                 }
-                
+
                 // Find the temporary submission using session_id
                 $tempSubmission = null;
                 if ($payment->session_id) {
                     $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)
                                                       ->where('status', 'pending')
                                                       ->first();
-                    
+
                     // Check if temp submission has expired
                     if ($tempSubmission && $tempSubmission->hasExpired()) {
                         Log::info('Temp submission expired during payment verification, using fallback', [
@@ -193,43 +193,43 @@ class NyscPaymentController extends Controller
                             'student_id' => $payment->student_id,
                             'payment_reference' => $payment->payment_reference
                         ]);
-                        
+
                         // Delete expired submission and set to null to trigger fallback
                         $tempSubmission->delete();
                         $tempSubmission = null;
                     }
                 }
-                
+
                 // If temp submission not found, try to find any temp submission for this student
                 if (!$tempSubmission && $payment->student_id) {
                     $tempSubmission = NyscTempSubmission::where('student_id', $payment->student_id)
                                                       ->orderBy('created_at', 'desc')
                                                       ->first();
-                    
+
                     // Check if this fallback submission has also expired
                     if ($tempSubmission && $tempSubmission->hasExpired()) {
                         Log::info('Fallback temp submission also expired, using data reconstruction', [
                             'student_id' => $payment->student_id,
                             'payment_reference' => $payment->payment_reference
                         ]);
-                        
+
                         // Delete expired submission and set to null to trigger data reconstruction
                         $tempSubmission->delete();
                         $tempSubmission = null;
                     }
                 }
-                
+
                 // If still no temp submission, try to reconstruct data from Student and StudentAcademic
                 if (!$tempSubmission) {
                     $student = Student::find($payment->student_id);
                     $studentAcademic = StudentAcademic::where('student_id', $payment->student_id)->first();
-                    
+
                     if (!$student || !$studentAcademic) {
                         return response()->json([
                             'message' => 'Student data not found. Cannot process payment.',
                         ], 400);
                     }
-                    
+
                     // Create a temporary data structure similar to temp submission
                     $tempSubmission = (object) [
                         'student_id' => $student->id,
@@ -277,18 +277,18 @@ class NyscPaymentController extends Controller
                             ];
                         }
                     ];
-                    
+
                     Log::info('Reconstructed student data for payment processing', [
                         'student_id' => $student->id,
                         'payment_id' => $payment->id,
                         'reason' => 'temp_submission_not_found'
                     ]);
                 }
-                
+
                 try {
                     // Begin database transaction
                     \DB::beginTransaction();
-                    
+
                     // Convert temp submission data to student_nysc format
                     if (is_object($tempSubmission) && method_exists($tempSubmission, 'toStudentNyscData')) {
                         // Handle actual NyscTempSubmission model
@@ -297,7 +297,7 @@ class NyscPaymentController extends Controller
                         // Handle reconstructed data object - call the closure function
                         $nyscData = $tempSubmission->toStudentNyscData();
                     }
-                    
+
                     // Create or update the NYSC record
                     $nysc = StudentNysc::updateOrCreate(
                         ['student_id' => $tempSubmission->student_id],
@@ -306,7 +306,7 @@ class NyscPaymentController extends Controller
                             'is_submitted' => true,
                         ])
                     );
-                    
+
                     // Update the payment record
                     // Note: student_nysc_id foreign key constraint is incorrectly set to reference students table
                     // We'll leave it as NULL for now to avoid constraint violations
@@ -316,23 +316,23 @@ class NyscPaymentController extends Controller
                         'transaction_id' => $responseData['data']['id'] ?? null,
                         'payment_data' => $responseData['data'],
                     ]);
-                    
+
                     // Mark temporary submission as paid (only if it's an actual model)
                     if (method_exists($tempSubmission, 'update')) {
                         $tempSubmission->update(['status' => 'paid']);
                     }
-                    
+
                     // Log successful submission
-                    Log::info('NYSC data submitted successfully after payment', [
+                    Log::info('Student Data submitted successfully after payment', [
                         'student_id' => $tempSubmission->student_id,
                         'nysc_id' => $nysc->id,
                         'payment_reference' => $reference,
                         'amount' => $payment->amount
                     ]);
-                    
+
                     // Commit transaction
                     \DB::commit();
-                    
+
                     return response()->json([
                         'success' => true,
                         'message' => 'Payment verified and data submitted successfully.',
@@ -347,17 +347,17 @@ class NyscPaymentController extends Controller
                             'is_submitted' => $nysc->is_submitted,
                         ]
                     ]);
-                    
+
                 } catch (\Exception $e) {
                     // Rollback transaction on error
                     \DB::rollback();
-                    
+
                     Log::error('Failed to process payment and submit data', [
                         'error' => $e->getMessage(),
                         'payment_reference' => $reference,
                         'session_id' => $payment->session_id
                     ]);
-                    
+
                     return response()->json([
                         'message' => 'Payment successful but failed to submit data. Please contact support.',
                         'error' => 'Data processing failed'
@@ -389,21 +389,21 @@ class NyscPaymentController extends Controller
         $paystackSecretKey = config('services.paystack.secret_key');
         $signature = $request->header('x-paystack-signature');
         $body = $request->getContent();
-        
+
         if (!$signature || !hash_equals($signature, hash_hmac('sha512', $body, $paystackSecretKey))) {
             return response()->json(['message' => 'Invalid signature'], 400);
         }
-        
+
         $event = $request->json()->all();
-        
+
         // Handle charge.success event
         if ($event['event'] === 'charge.success') {
             $data = $event['data'];
             $reference = $data['reference'];
-            
+
             // Find the payment record by reference
             $payment = NyscPayment::where('payment_reference', $reference)->first();
-            
+
             if ($payment && $payment->status !== 'successful') {
                 // Find the temporary submission using session_id
                 $tempSubmission = null;
@@ -412,15 +412,15 @@ class NyscPaymentController extends Controller
                                                       ->where('status', 'pending')
                                                       ->first();
                 }
-                
+
                 if ($tempSubmission) {
                     try {
                         // Begin database transaction
                         DB::beginTransaction();
-                        
+
                         // Convert temp submission data to student_nysc format
                         $nyscData = $tempSubmission->toStudentNyscData();
-                        
+
                         // Create or update the NYSC record
                         $nysc = StudentNysc::updateOrCreate(
                             ['student_id' => $tempSubmission->student_id],
@@ -429,7 +429,7 @@ class NyscPaymentController extends Controller
                                 'is_submitted' => true,
                             ])
                         );
-                        
+
                         // Update the payment record
                         $payment->update([
                             'student_nysc_id' => $nysc->id,
@@ -437,24 +437,24 @@ class NyscPaymentController extends Controller
                             'payment_date' => now(),
                             'transaction_id' => $data['id'] ?? null,
                         ]);
-                        
+
                         // Mark temporary submission as paid
                         $tempSubmission->update(['status' => 'paid']);
-                        
+
                         // Commit transaction
                         DB::commit();
-                        
+
                         Log::info('Payment webhook processed successfully', [
                             'reference' => $reference,
                             'amount' => $data['amount'] / 100,
                             'student_id' => $tempSubmission->student_id,
                             'nysc_id' => $nysc->id,
                         ]);
-                        
+
                     } catch (\Exception $e) {
                         // Rollback transaction on error
                         DB::rollback();
-                        
+
                         Log::error('Failed to process webhook payment and submit data', [
                             'error' => $e->getMessage(),
                             'payment_reference' => $reference,
@@ -468,7 +468,7 @@ class NyscPaymentController extends Controller
                         'payment_date' => now(),
                         'transaction_id' => $data['id'] ?? null,
                     ]);
-                    
+
                     Log::warning('Payment webhook processed but no temp submission found', [
                         'reference' => $reference,
                         'session_id' => $payment->session_id,
@@ -476,7 +476,7 @@ class NyscPaymentController extends Controller
                 }
             }
         }
-        
+
         return response()->json(['message' => 'Webhook processed successfully']);
     }
 
@@ -487,7 +487,7 @@ class NyscPaymentController extends Controller
     {
         try {
             $student = $request->user();
-            
+
             $payments = NyscPayment::where('student_id', $student->id)
                 ->with(['student', 'studentNysc'])
                 ->orderBy('created_at', 'desc')
@@ -540,7 +540,7 @@ class NyscPaymentController extends Controller
     {
         try {
             $student = $request->user();
-            
+
             $payment = NyscPayment::where('id', $paymentId)
                 ->where('student_id', $student->id)
                 ->where('status', 'successful')
@@ -602,7 +602,7 @@ class NyscPaymentController extends Controller
     {
         try {
             $student = $request->user();
-            
+
             $studentNysc = StudentNysc::where('student_id', $student->id)
                 ->where('is_submitted', true)
                 ->first();
@@ -610,7 +610,7 @@ class NyscPaymentController extends Controller
             if (!$studentNysc) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'No submitted NYSC data found for this student'
+                    'message' => 'No submitted Student Data found for this student'
                 ], 404);
             }
 

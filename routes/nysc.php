@@ -44,6 +44,9 @@ Route::prefix('nysc')->group(function () {
 
     // Paystack webhook (no authentication required)
     Route::post('payment/webhook', [NyscPaymentController::class, 'webhook']);
+    
+    // Public system status endpoint (no authentication required)
+    Route::get('system-status', [NyscAdminController::class, 'getPublicSystemStatus']);
 
     // ✅ Admin routes (with admin token ability)
     Route::prefix('admin')->middleware(['auth:sanctum'])->group(function () {

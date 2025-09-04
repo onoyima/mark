@@ -299,8 +299,13 @@ class NyscAdminController extends Controller
             // Calculate statistics from actual payment records
             $allPayments = \App\Models\NyscPayment::where('status', 'successful')->get();
             $totalAmount = $allPayments->sum('amount');
-            $standardFeeCount = $allPayments->where('amount', 1000)->count();
-            $lateFeeCount = $allPayments->where('amount', 10000)->count();
+            
+            // Get payment amounts from admin settings for accurate counting
+            $standardFee = AdminSetting::get('payment_amount');
+        $lateFee = AdminSetting::get('late_payment_fee');
+            
+            $standardFeeCount = $allPayments->where('amount', $standardFee)->count();
+            $lateFeeCount = $allPayments->where('amount', $lateFee)->count();
             
             return response()->json([
                 'payments' => $payments,
@@ -334,17 +339,36 @@ class NyscAdminController extends Controller
      */
     private function getSystemStatus()
     {
-        $isOpen = AdminSetting::get('system_open', true);
-        $deadline = AdminSetting::get('payment_deadline', now()->addDays(30));
-        $paymentAmount = AdminSetting::get('payment_amount', 1000);
-        $latePaymentFee = AdminSetting::get('late_payment_fee', 10000);
+        $isOpen = AdminSetting::get('system_open');
+        $deadline = AdminSetting::get('payment_deadline');
+        $paymentAmount = AdminSetting::get('payment_amount');
+        $latePaymentFee = AdminSetting::get('late_payment_fee');
+        $countdownTitle = AdminSetting::get('countdown_title');
+        $countdownMessage = AdminSetting::get('countdown_message');
         
         return [
             'is_open' => $isOpen,
             'deadline' => $deadline,
             'is_late_fee' => now()->gt($deadline),
             'current_fee' => now()->gt($deadline) ? $latePaymentFee : $paymentAmount,
+            'payment_amount' => $paymentAmount,
+            'late_payment_fee' => $latePaymentFee,
+            'countdown_title' => $countdownTitle,
+            'countdown_message' => $countdownMessage,
         ];
+    }
+
+    /**
+     * Get public system status (no authentication required)
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPublicSystemStatus(): \Illuminate\Http\JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->getSystemStatus()
+        ]);
     }
     
     /**
@@ -484,14 +508,14 @@ class NyscAdminController extends Controller
     public function getSystemSettings(): \Illuminate\Http\JsonResponse
     {
         $settings = [
-            'registration_fee' => AdminSetting::get('payment_amount', 500),
-            'late_fee' => AdminSetting::get('late_payment_fee', 10000),
-            'payment_deadline' => AdminSetting::get('payment_deadline', now()->addDays(30)),
-            'system_open' => AdminSetting::get('system_open', true),
-            'system_message' => AdminSetting::get('system_message', ''),
-            'contact_email' => AdminSetting::get('contact_email', 'admin@nysc.gov.ng'),
-            'contact_phone' => AdminSetting::get('contact_phone', '+234-800-NYSC'),
-            'maintenance_mode' => AdminSetting::get('maintenance_mode', false),
+            'registration_fee' => AdminSetting::get('payment_amount'),
+            'late_fee' => AdminSetting::get('late_payment_fee'),
+            'payment_deadline' => AdminSetting::get('payment_deadline'),
+            'system_open' => AdminSetting::get('system_open'),
+            'system_message' => AdminSetting::get('system_message'),
+            'contact_email' => AdminSetting::get('contact_email'),
+            'contact_phone' => AdminSetting::get('contact_phone'),
+            'maintenance_mode' => AdminSetting::get('maintenance_mode'),
         ];
         
         return response()->json(['settings' => $settings]);
@@ -578,12 +602,12 @@ class NyscAdminController extends Controller
     public function getEmailSettings(): \Illuminate\Http\JsonResponse
     {
         $settings = [
-            'smtp_host' => AdminSetting::get('smtp_host', ''),
-            'smtp_port' => AdminSetting::get('smtp_port', 587),
-            'smtp_username' => AdminSetting::get('smtp_username', ''),
-            'smtp_encryption' => AdminSetting::get('smtp_encryption', 'tls'),
-            'from_email' => AdminSetting::get('from_email', ''),
-            'from_name' => AdminSetting::get('from_name', 'Student Update Portal'),
+            'smtp_host' => AdminSetting::get('smtp_host'),
+            'smtp_port' => AdminSetting::get('smtp_port'),
+            'smtp_username' => AdminSetting::get('smtp_username'),
+            'smtp_encryption' => AdminSetting::get('smtp_encryption'),
+            'from_email' => AdminSetting::get('from_email'),
+            'from_name' => AdminSetting::get('from_name'),
         ];
         
         return response()->json(['settings' => $settings]);
@@ -844,7 +868,7 @@ class NyscAdminController extends Controller
 
     
     /**
-     * Get all students with their NYSC data
+     * Get all students with their Student Data
      *
      * @return \Illuminate\Http\JsonResponse
      */
@@ -1320,7 +1344,7 @@ class NyscAdminController extends Controller
     }
 
     /**
-     * Get student NYSC data for export
+     * Get student Student Data for export
      *
      * @param array $filters
      * @return array

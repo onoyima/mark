@@ -37,7 +37,7 @@
   - Available Fields: id, title, fname, mname, lname, gender, dob, country, state, lga, city, religion, marital_status, address, phone, email, jambno, study_mode
   - Academic data: ✅ Present
   - Contact data: ✅ Present
-  - NYSC data: ✅ Present
+  - Student Data: ✅ Present
   - Payment status: ✅ Present
 - **Notes:** Complete student profile data successfully retrieved
 

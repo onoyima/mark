@@ -113,10 +113,11 @@ class TestNyscPaymentFlow extends Command
         ]);
 
         // Create payment record
+        $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
             'session_id' => $sessionId,
-            'amount' => 10000.00,
+            'amount' => $paymentAmount,
             'payment_reference' => 'TEST-' . Str::random(10),
             'status' => 'pending',
             'payment_method' => 'paystack',
@@ -170,10 +171,11 @@ class TestNyscPaymentFlow extends Command
         $sessionId = 'NYSC-TEST-MISSING-' . Str::random(10) . '-' . time();
         
         // Create payment record without temp submission (simulating expired/deleted temp submission)
+        $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
             'session_id' => $sessionId,
-            'amount' => 10000.00,
+            'amount' => $paymentAmount,
             'payment_reference' => 'TEST-MISSING-' . Str::random(10),
             'status' => 'pending',
             'payment_method' => 'paystack',
@@ -219,10 +221,11 @@ class TestNyscPaymentFlow extends Command
         $sessionId = 'NYSC-TEST-PROCESSED-' . Str::random(10) . '-' . time();
         
         // Create already successful payment
+        $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
             'session_id' => $sessionId,
-            'amount' => 10000.00,
+            'amount' => $paymentAmount,
             'payment_reference' => 'TEST-PROCESSED-' . Str::random(10),
             'status' => 'successful',
             'payment_method' => 'paystack',
