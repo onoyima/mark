@@ -6,6 +6,7 @@ use App\Http\Controllers\NyscStudentController;
 use App\Http\Controllers\NyscPaymentController;
 use App\Http\Controllers\NyscAdminController;
 use App\Http\Controllers\NyscDocumentController;
+use App\Http\Controllers\NyscDuplicatePaymentController;
 
 Route::prefix('nysc')->group(function () {
 
@@ -98,6 +99,9 @@ Route::prefix('nysc')->group(function () {
         
         // Admin profile management
         Route::put('profile', [NyscAdminController::class, 'updateAdminProfile']);
+        
+        // Duplicate payments management
+        Route::get('duplicate-payments', [NyscDuplicatePaymentController::class, 'getDuplicatePayments']);
         
         // CSV upload and additional settings routes
         Route::post('upload-csv', [NyscAdminController::class, 'uploadCsv']);

@@ -83,4 +83,20 @@ class Student extends Model
     {
         return $this->belongsTo(State::class, 'state_id');
     }
+    
+    /**
+     * Get the NYSC record for the student.
+     */
+    public function nyscRecord()
+    {
+        return $this->hasOne(StudentNysc::class, 'student_id');
+    }
+    
+    /**
+     * Get all payments made by this student.
+     */
+    public function payments()
+    {
+        return $this->hasMany(NyscPayment::class, 'student_id');
+    }
 }
