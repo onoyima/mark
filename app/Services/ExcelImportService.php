@@ -8,6 +8,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use App\Models\Student;
 use App\Models\StudentAcademic;
 use App\Models\StudentNysc;
+use App\Models\CourseStudy;
 use Illuminate\Support\Facades\DB;
 
 class ExcelImportService
@@ -425,7 +426,6 @@ class ExcelImportService
                 'Marital Status:' => 'marital_status',
                 'GSM No:' => 'phone',
                 'State of Origin:' => 'state',
-                'Course of Study:' => 'course_study',
                 'Date of Graduation:' => 'graduation_year',
                 'Jamb Reg No:' => 'jamb_no',
                 'Study Mode:' => 'study_mode'
@@ -435,6 +435,32 @@ class ExcelImportService
             foreach ($fieldMappings as $responseField => $nyscField) {
                 if (isset($data[$responseField])) {
                     $nyscData[$nyscField] = $data[$responseField];
+                }
+            }
+            
+            // Fetch the student's academic record to get the actual course of study
+            $academicRecord = StudentAcademic::where('student_id', $studentId)->first();
+            if ($academicRecord && $academicRecord->course_study_id) {
+                // Get the course study name from the course_study table
+                $courseStudy = CourseStudy::find($academicRecord->course_study_id);
+                if ($courseStudy) {
+                    $nyscData['course_study'] = $courseStudy->name;
+                    $nyscData['department'] = $courseStudy->name; // Set department to the same value
+                    Log::info('Using course of study from database: ' . $courseStudy->name, ['matric_no' => $matricNo]);
+                } else {
+                    // Fallback to CSV data if course study not found
+                    if (isset($data['Course of Study:'])) {
+                        $nyscData['course_study'] = $data['Course of Study:'];
+                        $nyscData['department'] = $data['Course of Study:'];
+                        Log::info('Using course of study from CSV: ' . $data['Course of Study:'], ['matric_no' => $matricNo]);
+                    }
+                }
+            } else {
+                // Fallback to CSV data if academic record not found
+                if (isset($data['Course of Study:'])) {
+                    $nyscData['course_study'] = $data['Course of Study:'];
+                    $nyscData['department'] = $data['Course of Study:'];
+                    Log::info('Using course of study from CSV (no academic record): ' . $data['Course of Study:'], ['matric_no' => $matricNo]);
                 }
             }
             
