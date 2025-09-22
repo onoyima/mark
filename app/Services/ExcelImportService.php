@@ -153,7 +153,16 @@ class ExcelImportService
      */
     public function checkStudentInList($matricNo)
     {
-        return isset($this->listData[strtoupper($matricNo)]);
+        // Convert to uppercase for case-insensitive matching
+        $upperMatricNo = strtoupper($matricNo);
+        $result = isset($this->listData[$upperMatricNo]);
+        
+        // Log the result for debugging
+        if ($result) {
+            Log::info("Match found in list data for: " . $matricNo);
+        }
+        
+        return $result;
     }
 
     /**
@@ -183,8 +192,20 @@ class ExcelImportService
     {
         $eligibleRecords = [];
         
+        // Log the number of entries in CSV files for debugging
+        Log::info("List data count: " . count($this->listData));
+        Log::info("Response data count: " . count($this->responseData));
+        
+        // Debug the first few entries in listData to verify format
+        $i = 0;
+        foreach ($this->listData as $key => $value) {
+            Log::info("List data entry: Key=" . $key . ", Value=" . json_encode($value));
+            if (++$i >= 3) break; // Only log first 3 entries
+        }
+        
         // Get all students from the database
         $students = Student::with('academics')->get();
+        Log::info("Total students in database: " . $students->count());
         
         foreach ($students as $student) {
             // Skip if student doesn't have academic record with matric number
@@ -194,8 +215,14 @@ class ExcelImportService
             
             $matricNo = $student->academics->first()->matric_no;
             
-            // Check if student's matric number is in the CSV files
-            if ($this->checkStudentInList($matricNo)) {
+            // Log the matric number being checked for debugging
+            Log::info("Checking matric number: " . $matricNo . " (uppercase: " . strtoupper($matricNo) . ")");
+            
+            // Check if student's matric number is in the CSV files with explicit case conversion
+            $upperMatricNo = strtoupper($matricNo);
+            if (isset($this->listData[$upperMatricNo])) {
+                Log::info("Found match for: " . $matricNo);
+                
                 // Check if student already has NYSC data
                 $existingRecord = StudentNysc::where('student_id', $student->id)
                     ->orWhere('matric_no', $matricNo)
@@ -203,6 +230,7 @@ class ExcelImportService
                 
                 // Skip if student already has NYSC data
                 if ($existingRecord) {
+                    Log::info("Student already has NYSC data: " . $matricNo);
                     continue;
                 }
                 
@@ -213,7 +241,12 @@ class ExcelImportService
                     // Add student info for display
                     $preparedData['student_name'] = $student->fname . ' ' . $student->lname;
                     $eligibleRecords[] = $preparedData;
+                    Log::info("Added eligible record for: " . $matricNo);
+                } else {
+                    Log::info("Failed to prepare data for: " . $matricNo);
                 }
+            } else {
+                Log::info("No match found in list data for: " . $matricNo);
             }
         }
         
