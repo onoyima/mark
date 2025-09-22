@@ -196,6 +196,16 @@ class ExcelImportService
         Log::info("List data count: " . count($this->listData));
         Log::info("Response data count: " . count($this->responseData));
         
+        if (count($this->listData) === 0) {
+            Log::error("ERROR: List data is empty. Check if list.csv exists and is properly formatted.");
+            return $eligibleRecords;
+        }
+        
+        if (count($this->responseData) === 0) {
+            Log::error("ERROR: Response data is empty. Check if Response.csv exists and is properly formatted.");
+            return $eligibleRecords;
+        }
+        
         // Debug the first few entries in listData to verify format
         $i = 0;
         foreach ($this->listData as $key => $value) {
@@ -203,52 +213,52 @@ class ExcelImportService
             if (++$i >= 3) break; // Only log first 3 entries
         }
         
-        // Get all students from the database
-        $students = Student::with('academics')->get();
-        Log::info("Total students in database: " . $students->count());
-        
-        foreach ($students as $student) {
-            // Skip if student doesn't have academic record with matric number
-            if (!$student->academics || $student->academics->isEmpty() || !$student->academics->first()->matric_no) {
+        // Alternative approach: Start with the CSV data and find matching students
+        // This ensures we're working with matric numbers that definitely exist in the CSV files
+        foreach ($this->listData as $upperMatricNo => $listData) {
+            // Skip if this matric number is not in Response.csv
+            if (!isset($this->responseData[$upperMatricNo])) {
+                // Skip mismatches silently without logging
                 continue;
             }
             
-            $matricNo = $student->academics->first()->matric_no;
+            // Find student with this matric number (case-insensitive)
+            $academicRecord = StudentAcademic::whereRaw('UPPER(matric_no) = ?', [strtoupper($upperMatricNo)])->first();
             
-            // Log the matric number being checked for debugging
-            Log::info("Checking matric number: " . $matricNo . " (uppercase: " . strtoupper($matricNo) . ")");
+            if (!$academicRecord) {
+                // Skip silently if no academic record found
+                continue;
+            }
             
-            // Check if student's matric number is in the CSV files with explicit case conversion
-            $upperMatricNo = strtoupper($matricNo);
-            if (isset($this->listData[$upperMatricNo])) {
-                Log::info("Found match for: " . $matricNo);
-                
-                // Check if student already has NYSC data
-                $existingRecord = StudentNysc::where('student_id', $student->id)
-                    ->orWhere('matric_no', $matricNo)
-                    ->first();
-                
-                // Skip if student already has NYSC data
-                if ($existingRecord) {
-                    Log::info("Student already has NYSC data: " . $matricNo);
-                    continue;
-                }
-                
-                // Prepare data for this student
-                $preparedData = $this->prepareStudentData($student->id, $matricNo);
-                
-                if ($preparedData) {
-                    // Add student info for display
-                    $preparedData['student_name'] = $student->fname . ' ' . $student->lname;
-                    $eligibleRecords[] = $preparedData;
-                    Log::info("Added eligible record for: " . $matricNo);
-                } else {
-                    Log::info("Failed to prepare data for: " . $matricNo);
-                }
-            } else {
-                Log::info("No match found in list data for: " . $matricNo);
+            $student = Student::find($academicRecord->student_id);
+            if (!$student) {
+                // Skip silently if no student found
+                continue;
+            }
+            
+            // Check if student already has NYSC data
+            $existingRecord = StudentNysc::where('student_id', $student->id)
+                ->orWhere('matric_no', $upperMatricNo)
+                ->first();
+            
+            // Skip if student already has NYSC data
+            if ($existingRecord) {
+                continue;
+            }
+            
+            // Prepare data for this student
+            $preparedData = $this->prepareStudentData($student->id, $upperMatricNo);
+            
+            if ($preparedData) {
+                // Add student info for display
+                $preparedData['student_name'] = $student->fname . ' ' . $student->lname;
+                $eligibleRecords[] = $preparedData;
+                Log::info("Added eligible record for: " . $upperMatricNo);
             }
         }
+        
+        // Log the number of eligible records found
+        Log::info("Total eligible records found: " . count($eligibleRecords));
         
         return $eligibleRecords;
     }
