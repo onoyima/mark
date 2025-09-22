@@ -536,45 +536,145 @@ class ExcelImportService
             
             // Handle date formatting after applying mappings
             if (isset($nyscData['dob'])) {
-                // Keep the original DD/MM/YYYY format as requested
-                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['dob'])) {
-                    // Already in the desired format, no need to change
-                    // Just ensure it's properly formatted with leading zeros
-                    $parts = explode('/', $nyscData['dob']);
-                    $day = str_pad($parts[0], 2, '0', STR_PAD_LEFT);
-                    $month = str_pad($parts[1], 2, '0', STR_PAD_LEFT);
-                    $year = $parts[2];
-                    $nyscData['dob'] = "$day/$month/$year";
-                } else {
-                    // Try to convert other formats to DD/MM/YYYY
-                    $timestamp = strtotime($nyscData['dob']);
-                    if ($timestamp) {
-                        $nyscData['dob'] = date('d/m/Y', $timestamp);
+                $originalDob = $nyscData['dob']; // Store original value for logging
+                $parsedDate = null;
+                
+                // Method 1: Check for DD/MM/YYYY pattern
+                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['dob'], $matches)) {
+                    $day = (int)$matches[1];
+                    $month = (int)$matches[2];
+                    $year = (int)$matches[3];
+                    
+                    // Validate date components
+                    if (checkdate($month, $day, $year)) {
+                        // Format as YYYY-MM-DD for MySQL date field with proper zero-padding
+                        $day = str_pad($day, 2, '0', STR_PAD_LEFT);
+                        $month = str_pad($month, 2, '0', STR_PAD_LEFT);
+                        $parsedDate = "$year-$month-$day";
+                    } else {
+                        // Try swapping day and month (in case it's MM/DD/YYYY format)
+                        if (checkdate($day, $month, $year)) {
+                            $temp = $day;
+                            $day = $month;
+                            $month = $temp;
+                            $day = str_pad($day, 2, '0', STR_PAD_LEFT);
+                            $month = str_pad($month, 2, '0', STR_PAD_LEFT);
+                            $parsedDate = "$year-$month-$day";
+                        }
                     }
+                }
+                
+                // Method 2: Try DateTime::createFromFormat for common formats
+                 if (!$parsedDate) {
+                     foreach (['d/m/Y', 'm/d/Y', 'Y-m-d', 'd-m-Y', 'm-d-Y'] as $format) {
+                         $date = \DateTime::createFromFormat($format, $nyscData['dob']);
+                         if ($date && $date->format('Y') > 1970 && $date->format('Y') < 2020) {
+                             // Only accept dates with reasonable years (not 0004 or 2025)
+                             $parsedDate = $date->format('Y-m-d');
+                             break;
+                         }
+                     }
+                 }
+                
+                // Method 3: Try DateTime for other formats
+                 if (!$parsedDate) {
+                     try {
+                         $date = new \DateTime($nyscData['dob']);
+                         $year = (int)$date->format('Y');
+                         if ($year > 1970 && $year < 2020) { // Only accept reasonable years
+                             $parsedDate = $date->format('Y-m-d');
+                         }
+                     } catch (\Exception $e) {
+                         // DateTime failed
+                     }
+                 }
+                 
+                 // Method 4: Try strtotime as last resort
+                 if (!$parsedDate) {
+                     $timestamp = strtotime($nyscData['dob']);
+                     if ($timestamp && $timestamp > 0) { // Ensure timestamp is not 0 (1970-01-01)
+                         $year = (int)date('Y', $timestamp);
+                         if ($year > 1970 && $year < 2020) { // Only accept reasonable years
+                             $parsedDate = date('Y-m-d', $timestamp);
+                         }
+                     }
+                 }
+                
+                // Set the parsed date or null if parsing failed
+                if ($parsedDate) {
+                    $nyscData['dob'] = $parsedDate;
+                    Log::info("DOB parsed successfully", ['original' => $originalDob, 'parsed' => $nyscData['dob'], 'matric_no' => $nyscData['matric_no']]);
+                } else {
+                    $nyscData['dob'] = null;
+                    Log::warning("Failed to parse DOB - Setting to NULL", ['value' => $originalDob, 'matric_no' => $nyscData['matric_no']]);
                 }
             }
             
             // Process graduation year
             if (isset($nyscData['graduation_year'])) {
-                // For graduation_year, we need to extract just the year
-                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['graduation_year'], $matches)) {
-                    // Extract year from DD/MM/YYYY format
-                    $nyscData['graduation_year'] = $matches[3];
-                } elseif (preg_match('/^(\d{4})$/', $nyscData['graduation_year'])) {
-                    // Already a year format, keep as is
-                    $nyscData['graduation_year'] = $nyscData['graduation_year'];
-                } elseif (strpos($nyscData['graduation_year'], ',') !== false) {
-                    // Handle formats like "November 8, 2025"
-                    $timestamp = strtotime($nyscData['graduation_year']);
-                    if ($timestamp) {
-                        $nyscData['graduation_year'] = date('Y', $timestamp);
+                $originalYear = $nyscData['graduation_year']; // Store original value for logging
+                $parsedYear = null;
+                
+                // First check if it's already a 4-digit year
+                if (preg_match('/^(\d{4})$/', $nyscData['graduation_year'], $matches)) {
+                    $year = (int)$matches[1];
+                    if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                        $parsedYear = $year;
                     }
+                } 
+                // Check if it matches DD/MM/YYYY pattern
+                elseif (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['graduation_year'], $matches)) {
+                    $year = (int)$matches[3];
+                    if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                        $parsedYear = $year;
+                    }
+                } 
+                // Handle formats like "November 8, 2025"
+                elseif (strpos($nyscData['graduation_year'], ',') !== false) {
+                    try {
+                        $date = new \DateTime($nyscData['graduation_year']);
+                        $year = (int)$date->format('Y');
+                        if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                            $parsedYear = $year;
+                        }
+                    } catch (\Exception $e) {
+                        // If DateTime fails, try strtotime
+                        $timestamp = strtotime($nyscData['graduation_year']);
+                        if ($timestamp && $timestamp > 0) {
+                            $year = (int)date('Y', $timestamp);
+                            if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                                $parsedYear = $year;
+                            }
+                        }
+                    }
+                } 
+                // For other formats, try multiple parsing methods
+                else {
+                    try {
+                        $date = new \DateTime($nyscData['graduation_year']);
+                        $year = (int)$date->format('Y');
+                        if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                            $parsedYear = $year;
+                        }
+                    } catch (\Exception $e) {
+                        // If DateTime fails, try strtotime
+                        $timestamp = strtotime($nyscData['graduation_year']);
+                        if ($timestamp && $timestamp > 0) {
+                            $year = (int)date('Y', $timestamp);
+                            if ($year >= 1970 && $year <= 2023) { // Reasonable year range
+                                $parsedYear = $year;
+                            }
+                        }
+                    }
+                }
+                
+                // Set the parsed year or null if parsing failed
+                if ($parsedYear) {
+                    $nyscData['graduation_year'] = $parsedYear;
+                    Log::info("Graduation year parsed successfully", ['original' => $originalYear, 'parsed' => $nyscData['graduation_year'], 'matric_no' => $nyscData['matric_no']]);
                 } else {
-                    // Try to extract year from other formats
-                    $timestamp = strtotime($nyscData['graduation_year']);
-                    if ($timestamp) {
-                        $nyscData['graduation_year'] = date('Y', $timestamp);
-                    }
+                    $nyscData['graduation_year'] = null;
+                    Log::warning("Failed to parse graduation year - Setting to NULL", ['value' => $originalYear, 'matric_no' => $nyscData['matric_no']]);
                 }
             }
             
