@@ -536,11 +536,46 @@ class ExcelImportService
             
             // Handle date formatting after applying mappings
             if (isset($nyscData['dob'])) {
-                $nyscData['dob'] = date('Y-m-d', strtotime($nyscData['dob']));
+                // Keep the original DD/MM/YYYY format as requested
+                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['dob'])) {
+                    // Already in the desired format, no need to change
+                    // Just ensure it's properly formatted with leading zeros
+                    $parts = explode('/', $nyscData['dob']);
+                    $day = str_pad($parts[0], 2, '0', STR_PAD_LEFT);
+                    $month = str_pad($parts[1], 2, '0', STR_PAD_LEFT);
+                    $year = $parts[2];
+                    $nyscData['dob'] = "$day/$month/$year";
+                } else {
+                    // Try to convert other formats to DD/MM/YYYY
+                    $timestamp = strtotime($nyscData['dob']);
+                    if ($timestamp) {
+                        $nyscData['dob'] = date('d/m/Y', $timestamp);
+                    }
+                }
             }
             
+            // Process graduation year
             if (isset($nyscData['graduation_year'])) {
-                $nyscData['graduation_year'] = date('Y', strtotime($nyscData['graduation_year']));
+                // For graduation_year, we need to extract just the year
+                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $nyscData['graduation_year'], $matches)) {
+                    // Extract year from DD/MM/YYYY format
+                    $nyscData['graduation_year'] = $matches[3];
+                } elseif (preg_match('/^(\d{4})$/', $nyscData['graduation_year'])) {
+                    // Already a year format, keep as is
+                    $nyscData['graduation_year'] = $nyscData['graduation_year'];
+                } elseif (strpos($nyscData['graduation_year'], ',') !== false) {
+                    // Handle formats like "November 8, 2025"
+                    $timestamp = strtotime($nyscData['graduation_year']);
+                    if ($timestamp) {
+                        $nyscData['graduation_year'] = date('Y', $timestamp);
+                    }
+                } else {
+                    // Try to extract year from other formats
+                    $timestamp = strtotime($nyscData['graduation_year']);
+                    if ($timestamp) {
+                        $nyscData['graduation_year'] = date('Y', $timestamp);
+                    }
+                }
             }
             
             // Ensure matric_no is set correctly
