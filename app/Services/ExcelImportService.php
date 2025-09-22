@@ -630,4 +630,105 @@ class ExcelImportService
             return false;
         }
     }
+
+    /**
+     * Clean up duplicate records in Response.csv file
+     * Keeps only the most recent record for each matric number based on timestamp
+     * 
+     * @return bool
+     */
+    public function cleanupDuplicateRecords()
+    {
+        try {
+            $responseCsvPath = $this->storagePath . '/Response.csv';
+            
+            if (!file_exists($responseCsvPath)) {
+                Log::error('Response.csv file not found at: ' . $responseCsvPath);
+                return false;
+            }
+            
+            // Read the CSV file
+            $handle = fopen($responseCsvPath, 'r');
+            if (!$handle) {
+                Log::error('Could not open Response.csv file for reading');
+                return false;
+            }
+            
+            // Read header row
+            $header = fgetcsv($handle);
+            if (!$header) {
+                Log::error('Could not read header from Response.csv');
+                fclose($handle);
+                return false;
+            }
+            
+            // Find the index of the matric_no and timestamp columns
+            $matricNoIndex = array_search('Matric No', $header);
+            $timestampIndex = array_search('Timestamp', $header);
+            
+            if ($matricNoIndex === false || $timestampIndex === false) {
+                Log::error('Required columns not found in Response.csv');
+                fclose($handle);
+                return false;
+            }
+            
+            // Read all rows and organize by matric number
+            $recordsByMatric = [];
+            while (($row = fgetcsv($handle)) !== false) {
+                if (isset($row[$matricNoIndex]) && isset($row[$timestampIndex])) {
+                    $matricNo = strtolower(trim($row[$matricNoIndex]));
+                    $timestamp = strtotime($row[$timestampIndex]);
+                    
+                    if (!isset($recordsByMatric[$matricNo])) {
+                        $recordsByMatric[$matricNo] = [];
+                    }
+                    
+                    $recordsByMatric[$matricNo][] = [
+                        'data' => $row,
+                        'timestamp' => $timestamp
+                    ];
+                }
+            }
+            
+            fclose($handle);
+            
+            // Sort records by timestamp (descending) and keep only the most recent
+            $cleanedRecords = [];
+            foreach ($recordsByMatric as $matricNo => $records) {
+                usort($records, function($a, $b) {
+                    return $b['timestamp'] - $a['timestamp']; // Sort by timestamp descending
+                });
+                
+                // Keep only the most recent record
+                $cleanedRecords[] = $records[0]['data'];
+            }
+            
+            // Write the cleaned data back to the file
+            $handle = fopen($responseCsvPath, 'w');
+            if (!$handle) {
+                Log::error('Could not open Response.csv file for writing');
+                return false;
+            }
+            
+            // Write header
+            fputcsv($handle, $header);
+            
+            // Write cleaned records
+            foreach ($cleanedRecords as $record) {
+                fputcsv($handle, $record);
+            }
+            
+            fclose($handle);
+            
+            Log::info('Successfully cleaned up duplicate records in Response.csv', [
+                'original_count' => array_sum(array_map('count', $recordsByMatric)),
+                'cleaned_count' => count($cleanedRecords)
+            ]);
+            
+            return true;
+        } catch (\Exception $e) {
+            Log::error('Error cleaning up duplicate records: ' . $e->getMessage());
+            return false;
+        }
+    }
 }

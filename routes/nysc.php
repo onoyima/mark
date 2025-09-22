@@ -113,5 +113,6 @@ Route::prefix('nysc')->group(function () {
         Route::get('excel-import/eligible-records', [\App\Http\Controllers\NyscAdminExcelController::class, 'getEligibleRecords']);
         Route::post('excel-import/import-selected', [\App\Http\Controllers\NyscAdminExcelController::class, 'importSelectedRecords']);
         Route::post('excel-import/import-all', [\App\Http\Controllers\NyscAdminExcelController::class, 'importAllEligibleRecords']);
+        Route::post('excel-import/cleanup-duplicates', [\App\Http\Controllers\NyscAdminExcelController::class, 'cleanupDuplicateRecords']);
     });
 });

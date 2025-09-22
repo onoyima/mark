@@ -10,13 +10,13 @@ use App\Models\StudentNysc;
 class NyscAdminExcelController extends Controller
 {
     protected $excelService;
-    
+
     public function __construct()
     {
         $this->middleware(['auth:sanctum']);
         $this->excelService = new ExcelImportService();
     }
-    
+
     /**
      * Get eligible records for import
      *
@@ -41,7 +41,7 @@ class NyscAdminExcelController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Import selected records
      *
@@ -117,14 +117,14 @@ class NyscAdminExcelController extends Controller
             $eligibleRecords = $this->excelService->getEligibleRecordsForImport();
             $imported = 0;
             $failed = 0;
-            
+
             // Log the number of eligible records found
             Log::info('Attempting to import all eligible records', ['count' => count($eligibleRecords)]);
-            
+
             foreach ($eligibleRecords as $record) {
                 // Import data
                 $result = $this->excelService->importStudentData($record);
-                
+
                 if ($result) {
                     $imported++;
                     Log::info('Successfully imported record', ['matric_no' => $record['matric_no'] ?? 'unknown']);
@@ -133,7 +133,7 @@ class NyscAdminExcelController extends Controller
                     Log::error('Failed to import record', ['matric_no' => $record['matric_no'] ?? 'unknown']);
                 }
             }
-            
+
             return response()->json([
                 'success' => true,
                 'imported' => $imported,
@@ -142,10 +142,42 @@ class NyscAdminExcelController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error importing all eligible records: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to import records: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Clean up duplicate records in Response.csv file
+     * Keeps only the most recent record for each matric number based on timestamp
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function cleanupDuplicateRecords()
+    {
+        try {
+            $result = $this->excelService->cleanupDuplicateRecords();
+            
+            if ($result) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Successfully cleaned up duplicate records in Response.csv file.'
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to clean up duplicate records.'
+                ], 500);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error cleaning up duplicate records: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to clean up duplicate records: ' . $e->getMessage()
             ], 500);
         }
     }
