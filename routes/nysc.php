@@ -108,5 +108,10 @@ Route::prefix('nysc')->group(function () {
         Route::get('csv-template', [NyscAdminController::class, 'downloadCsvTemplate']);
         Route::post('clear-cache', [NyscAdminController::class, 'clearCache']);
         Route::post('test-email', [NyscAdminController::class, 'testEmail']);
+        
+        // Excel import functionality
+        Route::get('excel-import/eligible-records', [\App\Http\Controllers\NyscAdminExcelController::class, 'getEligibleRecords']);
+        Route::post('excel-import/import-selected', [\App\Http\Controllers\NyscAdminExcelController::class, 'importSelectedRecords']);
+        Route::post('excel-import/import-all', [\App\Http\Controllers\NyscAdminExcelController::class, 'importAllEligibleRecords']);
     });
 });

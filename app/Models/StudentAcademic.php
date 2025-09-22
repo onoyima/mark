@@ -15,7 +15,7 @@ class StudentAcademic extends Model
         'entry_mode_id',
         'study_mode_id',
         'matric_no',
-        'old_matric_no',
+        'old_mat_no',
         'course_study_id',
         'level',
         'entry_session_id',

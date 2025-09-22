@@ -123,6 +123,8 @@ class NyscAuthController extends Controller
                     'user_type' => 'student',
                     'user_id' => $student->id
                 ]);
+                
+                // Excel import functionality moved to admin panel
 
                 // Load related data
                 $student->load(['contacts', 'medicals']);

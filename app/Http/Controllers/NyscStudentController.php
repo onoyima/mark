@@ -36,6 +36,12 @@ class NyscStudentController extends Controller
     // Check if student has already submitted their details (from student_nysc table)
     $nysc = Studentnysc::where('student_id', $student->id)->first();
     $isSubmitted = $nysc && $nysc->is_submitted;
+    
+    // Check for temporary submission data
+    $tempSubmission = NyscTempSubmission::where('student_id', $student->id)
+        ->where('status', 'pending')
+        ->orderBy('created_at', 'desc')
+        ->first();
 
     // Helper function to handle null values
     $handleNull = function($value) {
@@ -79,7 +85,21 @@ class NyscStudentController extends Controller
             'graduation_year' => $handleNull(null),
             'cgpa' => $handleNull(null),
         ],
-        'nysc' => $nysc ? [
+        'nysc' => $tempSubmission ? [
+            'fname' => $tempSubmission->fname,
+            'lname' => $tempSubmission->lname,
+            'mname' => $tempSubmission->mname,
+            'gender' => $tempSubmission->gender,
+            'dob' => $tempSubmission->dob,
+            'marital_status' => $tempSubmission->marital_status,
+            'phone' => $tempSubmission->phone,
+            'email' => $tempSubmission->email,
+            'state' => $tempSubmission->state,
+            'course_of_study' => $tempSubmission->course_study,
+            'jamb_no' => $tempSubmission->jamb_no,
+            'study_mode' => $tempSubmission->study_mode,
+            'is_temp_submission' => true
+        ] : ($nysc ? [
             'fname' => $nysc->fname,
             'lname' => $nysc->lname,
             'mname' => $nysc->mname,
@@ -87,12 +107,13 @@ class NyscStudentController extends Controller
             'dob' => $nysc->dob,
             'marital_status' => $nysc->marital_status,
             'phone' => $nysc->phone,
-            'username' => $nysc->email,
+            'email' => $nysc->email,
             'state' => $nysc->state,
             'course_of_study' => $nysc->course_of_study,
             'jamb_no' => $nysc->jamb_no,
             'study_mode' => $nysc->study_mode,
-        ] : null,
+            'is_temp_submission' => false
+        ] : null),
         'is_submitted' => $isSubmitted,
         'is_paid' => $nysc ? $nysc->hasSuccessfulPayment() : false,
         'payment_amount' => $latestPayment ? $latestPayment->amount : null,

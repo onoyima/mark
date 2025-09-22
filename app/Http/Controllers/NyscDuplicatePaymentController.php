@@ -14,11 +14,13 @@ class NyscDuplicatePaymentController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getDuplicatePayments(): \Illuminate\Http\JsonResponse
+    public function getDuplicatePayments(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
+            $search = $request->get('search', '');
+            
             // Find students with more than one successful payment
-            $studentsWithMultiplePayments = Student::withCount([
+            $query = Student::withCount([
                 'payments as successful_payments_count' => function ($query) {
                     $query->where('status', 'successful');
                 }
@@ -27,9 +29,26 @@ class NyscDuplicatePaymentController extends Controller
             ->with(['payments' => function ($query) {
                 $query->where('status', 'successful')
                       ->orderBy('payment_date', 'desc');
-            }, 'nyscRecord'])
-            ->get()
+            }, 'nyscRecord']);
+            
+            // Apply search if provided
+            if (!empty($search)) {
+                $query->where(function($q) use ($search) {
+                    $q->where('fname', 'like', "%{$search}%")
+                      ->orWhere('lname', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%")
+                      ->orWhereHas('nyscRecord', function($q2) use ($search) {
+                          $q2->where('matric_no', 'like', "%{$search}%")
+                            ->orWhere('department', 'like', "%{$search}%");
+                      });
+                });
+            }
+            
+            $studentsWithMultiplePayments = $query->get()
             ->map(function ($student) {
+                $standardFee = AdminSetting::get('payment_amount', 2000);
+                $totalPaid = $student->payments->sum('amount');
+                
                 return [
                     'student_id' => $student->id,
                     'student_name' => $student->fname . ' ' . $student->lname,
@@ -44,23 +63,36 @@ class NyscDuplicatePaymentController extends Controller
                             'payment_reference' => $payment->payment_reference,
                             'payment_date' => $payment->payment_date,
                             'payment_method' => $payment->payment_method ?? 'paystack',
-                            'transaction_id' => $payment->transaction_id,
+                            'payment_status' => 'successful',
+                            'transaction_reference' => $payment->payment_reference,
                         ];
                     }),
-                    'total_paid' => $student->payments->sum('amount'),
+                    'total_paid' => $totalPaid,
+                    'expected_amount' => $standardFee,
+                    'overpayment' => $totalPaid - $standardFee,
                 ];
             });
 
+            // Handle pagination
+            $page = request()->get('page', 1);
+            $limit = request()->get('limit', 10);
+            $total = $studentsWithMultiplePayments->count();
+            $totalPages = ceil($total / $limit);
+            
+            // Apply pagination manually
+            $offset = ($page - 1) * $limit;
+            $paginatedPayments = $studentsWithMultiplePayments->slice($offset, $limit)->values();
+            
             return response()->json([
-                'duplicate_payments' => $studentsWithMultiplePayments,
-                'total' => $studentsWithMultiplePayments->count(),
+                'duplicate_payments' => $paginatedPayments,
+                'total' => $total,
+                'totalPages' => $totalPages,
                 'statistics' => [
+                    'total_students' => $total,
                     'total_duplicate_amount' => $studentsWithMultiplePayments->sum('total_paid'),
                     'average_overpayment' => $studentsWithMultiplePayments->count() > 0 ? 
                         $studentsWithMultiplePayments->sum(function ($student) {
-                            // Calculate overpayment (total - standard fee)
-                            $standardFee = AdminSetting::get('payment_amount', 2000);
-                            return $student['total_paid'] - $standardFee;
+                            return $student['overpayment'];
                         }) / $studentsWithMultiplePayments->count() : 0,
                 ],
             ]);
@@ -70,7 +102,9 @@ class NyscDuplicatePaymentController extends Controller
             return response()->json([
                 'duplicate_payments' => [],
                 'total' => 0,
+                'totalPages' => 0,
                 'statistics' => [
+                    'total_students' => 0,
                     'total_duplicate_amount' => 0,
                     'average_overpayment' => 0,
                 ],
