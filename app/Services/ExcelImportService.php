@@ -342,7 +342,7 @@ class ExcelImportService
             $nyscData = $this->prepareStudentData($studentId, $matricNo, $data);
             
             // Skip if no data to import
-            if (empty($nyscData)) {
+            if ($nyscData === false) {
                 Log::error('No data prepared for import', ['matric_no' => $matricNo]);
                 $errorCount++;
                 continue;
@@ -357,10 +357,17 @@ class ExcelImportService
                 $importCount++;
             } else {
                 // Import student data
-                if ($this->importStudentData($nyscData)) {
-                    $importCount++;
-                } else {
+                try {
+                    if ($this->importStudentData($nyscData)) {
+                        $importCount++;
+                        Log::info('Successfully imported student data', ['matric_no' => $matricNo, 'student_id' => $studentId]);
+                    } else {
+                        $errorCount++;
+                        Log::error('Failed to import student data', ['matric_no' => $matricNo, 'student_id' => $studentId]);
+                    }
+                } catch (\Exception $e) {
                     $errorCount++;
+                    Log::error('Exception during import: ' . $e->getMessage(), ['matric_no' => $matricNo, 'student_id' => $studentId]);
                 }
             }
             
@@ -391,6 +398,12 @@ class ExcelImportService
      */
     public function prepareStudentData($studentId, $matricNo, $data = null)
     {
+        // Ensure we have at least the basic required data
+        if (empty($studentId) || empty($matricNo)) {
+            Log::error('Missing required data for student', ['student_id' => $studentId, 'matric_no' => $matricNo]);
+            return false;
+        }
+        
         if ($data === null) {
             $data = $this->getStudentDataFromResponse($matricNo);
         }
@@ -421,9 +434,7 @@ class ExcelImportService
                 'First Name:' => 'fname',
                 'Surname:' => 'lname',
                 'Middle Name:' => 'mname',
-                'Gender:' => 'gender',
                 'Date of Birth:' => 'dob',
-                'Marital Status:' => 'marital_status',
                 'GSM No:' => 'phone',
                 'State of Origin:' => 'state',
                 'Date of Graduation:' => 'graduation_year',
@@ -437,6 +448,10 @@ class ExcelImportService
                     $nyscData[$nyscField] = $data[$responseField];
                 }
             }
+            
+            // Handle enum fields separately to ensure they're properly set to NULL if empty
+            $nyscData['gender'] = !empty($data['Gender:']) ? $data['Gender:'] : null;
+            $nyscData['marital_status'] = !empty($data['Marital Status:']) ? $data['Marital Status:'] : null;
             
             // Fetch the student's academic record to get the actual course of study
             $academicRecord = StudentAcademic::where('student_id', $studentId)->first();
@@ -535,7 +550,7 @@ class ExcelImportService
             }
             
             // Handle date formatting after applying mappings
-            if (isset($nyscData['dob'])) {
+            if (isset($nyscData['dob']) && !empty($nyscData['dob'])) {
                 $originalDob = $nyscData['dob']; // Store original value for logging
                 $parsedDate = null;
                 
@@ -611,7 +626,7 @@ class ExcelImportService
             }
             
             // Process graduation year
-            if (isset($nyscData['graduation_year'])) {
+            if (isset($nyscData['graduation_year']) && !empty($nyscData['graduation_year'])) {
                 $originalYear = $nyscData['graduation_year']; // Store original value for logging
                 $parsedYear = null;
                 
@@ -640,7 +655,7 @@ class ExcelImportService
                     } catch (\Exception $e) {
                         // If DateTime fails, try strtotime
                         $timestamp = strtotime($nyscData['graduation_year']);
-                        if ($timestamp && $timestamp > 0) {
+                        if ($timestamp && $timestamp > 0) { // Ensure timestamp is not 0 (1970-01-01)
                             $year = (int)date('Y', $timestamp);
                             if ($year >= 1970 && $year <= 2023) { // Reasonable year range
                                 $parsedYear = $year;
@@ -706,6 +721,11 @@ class ExcelImportService
             // Check if student_id is set
             if (empty($nyscData['student_id'])) {
                 // Try to find the student through academic records
+                if (empty($nyscData['matric_no'])) {
+                    Log::error('Both student_id and matric_no are missing or empty', ['data' => $nyscData]);
+                    return false;
+                }
+                
                 $matricNo = $nyscData['matric_no'];
                 $academic = DB::table('student_academics')
                     ->where('matric_no', $matricNo)
@@ -720,42 +740,84 @@ class ExcelImportService
                 }
             }
             
+            // Verify student_id is an integer
+            if (!is_numeric($nyscData['student_id'])) {
+                Log::error('student_id must be numeric', ['student_id' => $nyscData['student_id']]);
+                return false;
+            }
+            
             // Use DB::table with parameter binding to properly handle string values
-            $id = DB::table('student_nysc')->insertGetId([
+            $insertData = [
                 'student_id' => $nyscData['student_id'],
                 'matric_no' => $nyscData['matric_no'],
-                'is_paid' => isset($nyscData['is_paid']) ? $nyscData['is_paid'] : false,
-                'is_submitted' => isset($nyscData['is_submitted']) ? $nyscData['is_submitted'] : false,
-                'fname' => isset($nyscData['fname']) ? $nyscData['fname'] : '',
-                'lname' => isset($nyscData['lname']) ? $nyscData['lname'] : '',
-                'mname' => isset($nyscData['mname']) ? $nyscData['mname'] : '',
-                'gender' => isset($nyscData['gender']) ? $nyscData['gender'] : '',
-                'dob' => isset($nyscData['dob']) ? $nyscData['dob'] : null,
-                'marital_status' => isset($nyscData['marital_status']) ? $nyscData['marital_status'] : '',
-                'phone' => isset($nyscData['phone']) ? $nyscData['phone'] : '',
-                'email' => isset($nyscData['email']) ? $nyscData['email'] : '',
-                'address' => isset($nyscData['address']) ? $nyscData['address'] : '',
-                'state' => isset($nyscData['state']) ? $nyscData['state'] : '',
-                'lga' => isset($nyscData['lga']) ? $nyscData['lga'] : '',
-                'username' => isset($nyscData['username']) ? $nyscData['username'] : '',
-                'department' => isset($nyscData['department']) ? $nyscData['department'] : '',
-                'course_study' => isset($nyscData['course_study']) ? $nyscData['course_study'] : '',
-                'level' => isset($nyscData['level']) ? $nyscData['level'] : '',
-                'graduation_year' => isset($nyscData['graduation_year']) ? $nyscData['graduation_year'] : '',
-                'cgpa' => isset($nyscData['cgpa']) ? $nyscData['cgpa'] : '',
-                'jamb_no' => isset($nyscData['jamb_no']) ? $nyscData['jamb_no'] : '',
-                'study_mode' => isset($nyscData['study_mode']) ? $nyscData['study_mode'] : '',
+                'is_paid' => $nyscData['is_paid'] ?? false,
+                'is_submitted' => $nyscData['is_submitted'] ?? false,
+                'fname' => $nyscData['fname'] ?? '',
+                'lname' => $nyscData['lname'] ?? '',
+                'mname' => $nyscData['mname'] ?? '',
+                // Handle enum fields properly - set to NULL if empty or invalid
+                'gender' => !empty($nyscData['gender']) ? $nyscData['gender'] : null,
+                'marital_status' => !empty($nyscData['marital_status']) ? $nyscData['marital_status'] : null,
+                'phone' => $nyscData['phone'] ?? '',
+                'email' => $nyscData['email'] ?? '',
+                'address' => $nyscData['address'] ?? '',
+                'state' => $nyscData['state'] ?? '',
+                'lga' => $nyscData['lga'] ?? '',
+                'username' => $nyscData['username'] ?? '',
+                'department' => $nyscData['department'] ?? '',
+                'course_study' => $nyscData['course_study'] ?? '',
+                'level' => $nyscData['level'] ?? '',
+                'cgpa' => $nyscData['cgpa'] ?? 0,
+                'jamb_no' => $nyscData['jamb_no'] ?? '',
+                'study_mode' => $nyscData['study_mode'] ?? '',
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]);
+            ];
             
-            Log::info('Imported NYSC data for student', [
-                'student_id' => $nyscData['student_id'],
-                'matric_no' => $nyscData['matric_no'],
-                'id' => $id
-            ]);
+            // Handle nullable fields separately with improved null handling
+            if (!empty($nyscData['dob'])) {
+                $insertData['dob'] = $nyscData['dob'];
+            } else {
+                $insertData['dob'] = null;
+            }
             
-            return true;
+            if (!empty($nyscData['graduation_year'])) {
+                $insertData['graduation_year'] = $nyscData['graduation_year'];
+            } else {
+                $insertData['graduation_year'] = null;
+            }
+            
+            // Check for required fields
+            if (empty($insertData['student_id'])) {
+                Log::error('Cannot insert record: student_id is required', ['insert_data' => $insertData]);
+                return false;
+            }
+            
+            if (empty($insertData['matric_no'])) {
+                Log::error('Cannot insert record: matric_no is required', ['insert_data' => $insertData]);
+                return false;
+            }
+            
+            try {
+                // Insert the data into the student_nysc table
+                $id = DB::table('student_nysc')->insertGetId($insertData);
+                
+                if (!$id) {
+                    Log::error('Insert failed: No ID returned', ['insert_data' => $insertData]);
+                    return false;
+                }
+                
+                Log::info('Imported NYSC data for student', [
+                    'student_id' => $nyscData['student_id'],
+                    'matric_no' => $nyscData['matric_no'],
+                    'id' => $id
+                ]);
+                
+                return true;
+            } catch (\Exception $e) {
+                Log::error('Exception during insert: ' . $e->getMessage(), ['insert_data' => $insertData]);
+                return false;
+            }
         } catch (\Exception $e) {
             Log::error('Error importing student data: ' . $e->getMessage(), [
                 'matric_no' => isset($nyscData['matric_no']) ? $nyscData['matric_no'] : 'unknown',
