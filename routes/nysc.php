@@ -7,6 +7,8 @@ use App\Http\Controllers\NyscPaymentController;
 use App\Http\Controllers\NyscAdminController;
 use App\Http\Controllers\NyscDocumentController;
 use App\Http\Controllers\NyscDuplicatePaymentController;
+use App\Http\Controllers\NyscDocxImportController;
+use App\Http\Controllers\NyscCsvExportController;
 
 Route::prefix('nysc')->group(function () {
 
@@ -65,6 +67,9 @@ Route::prefix('nysc')->group(function () {
         Route::get('exports/{format}', [NyscAdminController::class, 'export']);
         Route::get('export-students/{format}', [NyscAdminController::class, 'exportStudents']);
         Route::get('payments', [NyscAdminController::class, 'payments']);
+        Route::get('payments/{id}', [NyscAdminController::class, 'getPaymentDetails']);
+        Route::post('payments/{id}/verify', [NyscAdminController::class, 'verifyPayment']);
+        Route::post('payments/verify-all', [NyscAdminController::class, 'verifyAllPendingPayments']);
         
         // Submissions management routes
         Route::get('submissions', [NyscAdminController::class, 'getSubmissions']);
@@ -82,6 +87,10 @@ Route::prefix('nysc')->group(function () {
         Route::get('students/stats', [NyscAdminController::class, 'getStudentStats']);
         Route::get('students/{studentId}', [NyscAdminController::class, 'getStudentDetails']);
         Route::get('students/export', [NyscAdminController::class, 'exportStudents']);
+        
+        // Students list routes (new functionality)
+        Route::get('students-list', [NyscAdminController::class, 'getStudentsList']);
+        Route::get('students-list/export', [NyscAdminController::class, 'exportStudentsList']);
         
         // System settings routes
         Route::get('settings/system', [NyscAdminController::class, 'getSystemSettings']);
@@ -114,5 +123,46 @@ Route::prefix('nysc')->group(function () {
         Route::post('excel-import/import-selected', [\App\Http\Controllers\NyscAdminExcelController::class, 'importSelectedRecords']);
         Route::post('excel-import/import-all', [\App\Http\Controllers\NyscAdminExcelController::class, 'importAllEligibleRecords']);
         Route::post('excel-import/cleanup-duplicates', [\App\Http\Controllers\NyscAdminExcelController::class, 'cleanupDuplicateRecords']);
+        
+        // DOCX import functionality
+        Route::get('docx-import/test', [NyscDocxImportController::class, 'test']);
+        Route::post('docx-import/upload', [NyscDocxImportController::class, 'uploadDocx']);
+        Route::get('docx-import/review/{sessionId}', [NyscDocxImportController::class, 'getReviewData']);
+        Route::post('docx-import/approve', [NyscDocxImportController::class, 'approveUpdates']);
+        Route::get('docx-import/stats', [NyscDocxImportController::class, 'getImportStats']);
+        Route::get('docx-import/export-student-data', [NyscDocxImportController::class, 'exportStudentData']);
+        Route::get('docx-import/export-null-students', function() {
+            try {
+                $students = \App\Models\StudentNysc::whereNull('class_of_degree')->limit(5)->get(['matric_no', 'fname', 'lname']);
+                return response()->json(['success' => true, 'count' => $students->count(), 'sample' => $students]);
+            } catch (\Exception $e) {
+                return response()->json(['error' => $e->getMessage()], 500);
+            }
+        });
+        Route::get('docx-import/test-null-export', function() {
+            try {
+                $controller = new \App\Http\Controllers\NyscDocxImportController();
+                $result = $controller->exportStudentsWithNullDegree();
+                return response()->json(['status' => 'Method executed successfully', 'result_type' => get_class($result)]);
+            } catch (\Exception $e) {
+                return response()->json(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
+            }
+        })->withoutMiddleware(['auth:sanctum']);
+        Route::get('docx-import/graduands-matches', [NyscAdminController::class, 'getGraduandsMatches']);
+        Route::post('docx-import/graduands-apply', [NyscAdminController::class, 'applyGraduandsUpdates']);
+        Route::post('docx-import/test-db-update', [NyscAdminController::class, 'testDatabaseUpdate']);
+        
+        // CSV Export routes
+        Route::get('csv-export/test', [NyscAdminController::class, 'testCsvExport']);
+        Route::get('csv-export/student-data', [NyscAdminController::class, 'exportStudentNyscCsv']);
+        Route::get('csv-export/stats', [NyscAdminController::class, 'getCsvExportStats']);
     });
+});
+
+// Public export route for null degree students (no authentication required)
+Route::get('nysc/export-null-degree-students', [App\Http\Controllers\NyscDocxImportController::class, 'exportStudentsWithNullDegree']);
+
+// Test endpoint to verify frontend can reach backend
+Route::get('nysc/test-connection', function() {
+    return response()->json(['status' => 'Backend reachable', 'timestamp' => now()]);
 });

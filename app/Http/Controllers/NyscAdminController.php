@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Exports\StudentNyscExport;
+use App\Exports\StudentsListExport;
 
 class NyscAdminController extends Controller
 {
@@ -235,69 +236,120 @@ class NyscAdminController extends Controller
      */
     public function export($format)
     {
-        $students = StudentNysc::where('is_submitted', true)
-            ->with(['student', 'payments' => function($query) {
-                $query->where('status', 'successful')->orderBy('payment_date', 'desc');
-            }])
-            ->get();
-        
-        // Transform data to include payment information
-        $students = $students->map(function($student) {
-            $latestPayment = $student->payments->first();
-            $student->payment_amount = $latestPayment ? $latestPayment->amount : 0;
-            $student->payment_date = $latestPayment ? $latestPayment->payment_date : null;
-            return $student;
-        });
-        
-        switch ($format) {
-            case 'excel':
-                return $this->exportExcel($students);
-            case 'csv':
-                return $this->exportCsv($students);
-            case 'pdf':
-                return $this->exportPdf($students);
-            default:
-                return response()->json([
-                    'message' => 'Invalid export format.',
-                ], 400);
+        try {
+            Log::info("Export request received for format: {$format}");
+            
+            $students = StudentNysc::where('is_submitted', true)
+                ->with(['payments' => function($query) {
+                    $query->where('status', 'successful')->orderBy('payment_date', 'desc');
+                }])
+                ->get();
+            
+            Log::info("Found {$students->count()} students for export");
+            
+            // Transform data to include payment information
+            $students = $students->map(function($student) {
+                $latestPayment = $student->payments->first();
+                $student->payment_amount = $latestPayment ? $latestPayment->amount : 0;
+                $student->payment_date = $latestPayment ? $latestPayment->payment_date : null;
+                return $student;
+            });
+            
+            switch ($format) {
+                case 'excel':
+                    return $this->exportExcel($students);
+                case 'csv':
+                    return $this->exportCsv($students);
+                case 'pdf':
+                    return $this->exportPdf($students);
+                default:
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid export format. Supported formats: excel, csv, pdf',
+                    ], 400);
+            }
+        } catch (\Exception $e) {
+            Log::error('Export failed: ' . $e->getMessage(), [
+                'format' => $format,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Export failed: ' . $e->getMessage(),
+                'error' => config('app.debug') ? $e->getTraceAsString() : 'Internal server error'
+            ], 500);
         }
     }
     
     /**
      * Get payment data
      *
+     * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
-    public function payments(): \Illuminate\Http\JsonResponse
+    public function payments(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
-            // Get all payment records from nysc_payment table with student information
-            $payments = \App\Models\NyscPayment::with(['studentNysc.student'])
-                ->orderBy('payment_date', 'desc')
-                ->get()
-                ->map(function($payment) {
-                    $studentNysc = $payment->studentNysc;
-                    $student = $studentNysc ? $studentNysc->student : null;
-                    
-                    // If no studentNysc relationship, try to get student directly
-                    if (!$student && $payment->student_id) {
-                        $student = \App\Models\Student::find($payment->student_id);
-                    }
-                    
-                    return [
-                        'id' => $payment->id,
-                        'student_id' => $payment->student_id,
-                        'student_name' => $studentNysc ? trim($studentNysc->fname . ' ' . $studentNysc->mname . ' ' . $studentNysc->lname) : ($student ? $student->first_name . ' ' . $student->last_name : 'N/A'),
-                        'matric_number' => $studentNysc ? $studentNysc->matric_no : 'N/A',
-                        'email' => $student ? $student->email : 'N/A',
-                        'department' => $studentNysc ? $studentNysc->department : 'N/A',
-                        'amount' => $payment->amount,
-                        'payment_method' => $payment->payment_method ?? 'paystack',
-                        'payment_status' => $payment->status,
-                        'transaction_reference' => $payment->payment_reference,
-                        'payment_date' => $payment->payment_date,
-                        'created_at' => $payment->created_at,
-                        'updated_at' => $payment->updated_at,
+            $perPage = $request->input('per_page', 10);
+            $page = $request->input('page', 1);
+            
+            $query = NyscPayment::with(['studentNysc.student']);
+            
+            // Apply filters if provided
+            if ($request->has('status')) {
+                $query->where('status', $request->status);
+            }
+            
+            if ($request->has('payment_method')) {
+                $query->where('payment_method', $request->payment_method);
+            }
+            
+            if ($request->has('search')) {
+                $search = $request->search;
+                $query->whereHas('studentNysc', function($q) use ($search) {
+                    $q->where('fname', 'like', "%{$search}%")
+                      ->orWhere('lname', 'like', "%{$search}%")
+                      ->orWhere('matric_no', 'like', "%{$search}%");
+                });
+            }
+            
+            // Date range filters
+            if ($request->has('dateStart') && $request->dateStart) {
+                $query->whereDate('payment_date', '>=', $request->dateStart);
+            }
+            
+            if ($request->has('dateEnd') && $request->dateEnd) {
+                $query->whereDate('payment_date', '<=', $request->dateEnd);
+            }
+            
+            $payments = $query->orderBy('payment_date', 'desc')
+                ->paginate($perPage, ['*'], 'page', $page);
+            
+            // Transform the data
+            $payments->getCollection()->transform(function($payment) {
+                $studentNysc = $payment->studentNysc;
+                $student = $studentNysc ? $studentNysc->student : null;
+                
+                // If no studentNysc relationship, try to get student directly
+                if (!$student && $payment->student_id) {
+                    $student = \App\Models\Student::find($payment->student_id);
+                }
+                
+                return [
+                    'id' => $payment->id,
+                    'student_id' => $payment->student_id,
+                    'student_name' => $studentNysc ? trim($studentNysc->fname . ' ' . $studentNysc->mname . ' ' . $studentNysc->lname) : ($student ? $student->first_name . ' ' . $student->last_name : 'N/A'),
+                    'matric_number' => $studentNysc ? $studentNysc->matric_no : 'N/A',
+                    'email' => $student ? $student->email : 'N/A',
+                    'department' => $studentNysc ? $studentNysc->department : 'N/A',
+                    'amount' => $payment->amount,
+                    'payment_method' => $payment->payment_method ?? 'paystack',
+                    'payment_status' => $payment->status,
+                    'transaction_reference' => $payment->payment_reference,
+                    'payment_date' => $payment->payment_date,
+                    'created_at' => $payment->created_at,
+                    'updated_at' => $payment->updated_at,
                     ];
                 });
             
@@ -351,6 +403,193 @@ class NyscAdminController extends Controller
     }
     
     /**
+     * Get payment details by ID
+     *
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPaymentDetails($id): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $payment = NyscPayment::with(['studentNysc.student'])->findOrFail($id);
+            
+            // Transform the payment data
+            $studentNysc = $payment->studentNysc;
+            $student = $studentNysc ? $studentNysc->student : null;
+            
+            // If no studentNysc relationship, try to get student directly
+            if (!$student && $payment->student_id) {
+                $student = \App\Models\Student::find($payment->student_id);
+            }
+            
+            $paymentData = [
+                'id' => $payment->id,
+                'student_id' => $payment->student_id,
+                'student_name' => $studentNysc ? trim($studentNysc->fname . ' ' . $studentNysc->mname . ' ' . $studentNysc->lname) : ($student ? $student->first_name . ' ' . $student->last_name : 'N/A'),
+                'matric_number' => $studentNysc ? $studentNysc->matric_no : 'N/A',
+                'email' => $student ? $student->email : 'N/A',
+                'department' => $studentNysc ? $studentNysc->department : 'N/A',
+                'amount' => $payment->amount,
+                'payment_method' => $payment->payment_method ?? 'paystack',
+                'payment_status' => $payment->status,
+                'transaction_reference' => $payment->payment_reference,
+                'payment_date' => $payment->payment_date,
+                'created_at' => $payment->created_at,
+                'updated_at' => $payment->updated_at,
+                'payment_data' => $payment->payment_data ? json_decode($payment->payment_data) : null
+            ];
+            
+            return response()->json([
+                'success' => true,
+                'data' => $paymentData
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching payment details: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch payment details'
+            ], 404);
+        }
+    }
+    
+    /**
+     * Verify a specific payment with Paystack and update status
+     *
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function verifyPayment(Request $request, $id): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $payment = NyscPayment::findOrFail($id);
+            
+            if ($payment->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Only pending payments can be verified'
+                ], 400);
+            }
+            
+            $paystackService = new \App\Services\PaystackService();
+            $verification = $paystackService->verifyPayment($payment->payment_reference);
+            
+            if (!$verification['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $verification['message'] ?? 'Payment verification failed'
+                ], 400);
+            }
+            
+            $paymentData = $verification['data']['data'];
+            
+            if ($paymentData['status'] === 'success') {
+                // Update payment status
+                $payment->status = 'successful';
+                $payment->payment_data = json_encode($paymentData);
+                $payment->save();
+                
+                // Update student payment status
+                $student = Student::find($payment->student_id);
+                if ($student) {
+                    $studentNysc = StudentNysc::where('student_id', $student->id)->first();
+                    if ($studentNysc) {
+                        $studentNysc->is_paid = true;
+                        $studentNysc->save();
+                    }
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Payment verified successfully',
+                    'data' => $payment->fresh(['studentNysc.student'])
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Payment was not successful on Paystack'
+                ], 400);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error verifying payment: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to verify payment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Verify all pending payments with Paystack
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function verifyAllPendingPayments(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $pendingPayments = NyscPayment::where('status', 'pending')->get();
+            
+            if ($pendingPayments->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'No pending payments to verify',
+                    'verified' => 0,
+                    'failed' => 0
+                ]);
+            }
+            
+            $paystackService = new \App\Services\PaystackService();
+            $verified = 0;
+            $failed = 0;
+            
+            foreach ($pendingPayments as $payment) {
+                $verification = $paystackService->verifyPayment($payment->payment_reference);
+                
+                if ($verification['success']) {
+                    $paymentData = $verification['data']['data'];
+                    
+                    if ($paymentData['status'] === 'success') {
+                        // Update payment status
+                        $payment->status = 'successful';
+                        $payment->payment_data = json_encode($paymentData);
+                        $payment->save();
+                        
+                        // Update student payment status
+                        $student = Student::find($payment->student_id);
+                        if ($student) {
+                            $studentNysc = StudentNysc::where('student_id', $student->id)->first();
+                            if ($studentNysc) {
+                                $studentNysc->is_paid = true;
+                                $studentNysc->save();
+                            }
+                        }
+                        
+                        $verified++;
+                    } else {
+                        $failed++;
+                    }
+                } else {
+                    $failed++;
+                }
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Verified {$verified} payments, {$failed} failed",
+                'verified' => $verified,
+                'failed' => $failed
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error verifying all payments: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to verify payments: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
      * Get system status
      *
      * @return array
@@ -397,12 +636,18 @@ class NyscAdminController extends Controller
      */
     private function exportExcel($students)
     {
-        // In a real application, you would use a library like PhpSpreadsheet or Laravel Excel
-        // For this example, we'll just return a JSON response
-        return response()->json([
-            'message' => 'Excel export functionality would be implemented here.',
-            'data' => $students,
-        ]);
+        try {
+            $filename = 'nysc_students_' . date('Y-m-d_H-i-s') . '.xlsx';
+            
+            return Excel::download(new StudentNyscExport($students), $filename);
+
+        } catch (\Exception $e) {
+            Log::error('Excel export error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Excel export failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
@@ -413,55 +658,72 @@ class NyscAdminController extends Controller
      */
     private function exportCsv($students)
     {
-        $headers = [
-            'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="nysc-students.csv"',
-        ];
-        
-        $callback = function() use ($students) {
-            $file = fopen('php://output', 'w');
+        try {
+            $filename = 'nysc_students_' . date('Y-m-d_H-i-s') . '.csv';
             
-            // Add headers
-            fputcsv($file, [
-                'ID', 'First Name', 'Middle Name', 'Last Name', 'Matric No', 'JAMB No', 'Study Mode', 'Gender', 'Date of Birth',
-                'Marital Status', 'Phone', 'Email', 'Address', 'State of Origin',
-                'LGA', 'Course of Study', 'Department', 'Faculty', 'Graduation Year',
-                'CGPA', 'Payment Status', 'Payment Amount', 'Payment Date'
-            ]);
+            $headers = [
+                'Content-Type' => 'text/csv',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+                'Expires' => '0',
+                'Pragma' => 'public',
+            ];
             
-            // Add data
-            foreach ($students as $student) {
+            $callback = function() use ($students) {
+                $file = fopen('php://output', 'w');
+                
+                // Add BOM for proper UTF-8 encoding in Excel
+                fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+                
+                // Add headers
                 fputcsv($file, [
-                    $student->id,
-                    $student->fname,
-                    $student->mname,
-                    $student->lname,
-                    $student->matric_no,
-                    $student->jambno,
-                    $student->study_mode,
-                    $student->gender,
-                    $student->dob,
-                    $student->marital_status,
-                    $student->phone,
-                    $student->email,
-                    $student->address,
-                    $student->state_of_origin,
-                    $student->lga,
-                    $student->course_of_study,
-                    $student->department,
-                    $student->faculty,
-                    $student->graduation_year,
-                    $student->cgpa,
-                    $student->is_paid ? 'Paid' : 'Unpaid',
-                    $student->payment_amount,
-                    $student->payment_date,
+                    'ID', 'First Name', 'Middle Name', 'Last Name', 'Matric No', 'JAMB No', 'Study Mode', 'Gender', 'Date of Birth',
+                    'Marital Status', 'Phone', 'Email', 'Address', 'State of Origin',
+                    'LGA', 'Course of Study', 'Department', 'Graduation Year',
+                    'CGPA', 'Class of Degree', 'Payment Status', 'Payment Amount', 'Payment Date'
                 ]);
-            }
+                
+                // Add data
+                foreach ($students as $student) {
+                    fputcsv($file, [
+                        $student->id ?? '',
+                        $student->fname ?? '',
+                        $student->mname ?? '',
+                        $student->lname ?? '',
+                        $student->matric_no ?? '',
+                        $student->jamb_no ?? '',
+                        $student->study_mode ?? '',
+                        $student->gender ?? '',
+                        $student->dob ? $student->dob->format('Y-m-d') : '',
+                        $student->marital_status ?? '',
+                        $student->phone ?? '',
+                        $student->email ?? '',
+                        $student->address ?? '',
+                        $student->state ?? '',
+                        $student->lga ?? '',
+                        $student->course_study ?? '',
+                        $student->department ?? '',
+                        $student->graduation_year ?? '',
+                        $student->cgpa ?? '',
+                        $student->class_of_degree ?? '',
+                        $student->is_paid ? 'Paid' : 'Unpaid',
+                        $student->payment_amount ?? 0,
+                        $student->payment_date ? $student->payment_date->format('Y-m-d H:i:s') : '',
+                    ]);
+                }
+                
+                fclose($file);
+            };
             
-            fclose($file);
-        };
-        
-        return Response::stream($callback, 200, $headers);
+            return Response::stream($callback, 200, $headers);
+            
+        } catch (\Exception $e) {
+            Log::error('CSV export error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'CSV export failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
@@ -472,12 +734,66 @@ class NyscAdminController extends Controller
      */
     private function exportPdf($students)
     {
-        // In a real application, you would use a library like DOMPDF or TCPDF
-        // For this example, we'll just return a JSON response
-        return response()->json([
-            'message' => 'PDF export functionality would be implemented here.',
-            'data' => $students,
-        ]);
+        try {
+            // Create HTML content for PDF
+            $html = '<html><head><title>NYSC Students Export</title>';
+            $html .= '<style>
+                body { font-family: Arial, sans-serif; font-size: 12px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; font-weight: bold; }
+                .header { text-align: center; margin-bottom: 20px; }
+                .summary { margin-bottom: 20px; }
+            </style></head><body>';
+            
+            $html .= '<div class="header">';
+            $html .= '<h1>NYSC Students Export Report</h1>';
+            $html .= '<p>Generated on: ' . now()->format('Y-m-d H:i:s') . '</p>';
+            $html .= '</div>';
+            
+            $html .= '<div class="summary">';
+            $html .= '<p><strong>Total Students:</strong> ' . $students->count() . '</p>';
+            $html .= '<p><strong>Paid Students:</strong> ' . $students->where('is_paid', true)->count() . '</p>';
+            $html .= '<p><strong>Unpaid Students:</strong> ' . $students->where('is_paid', false)->count() . '</p>';
+            $html .= '</div>';
+            
+            $html .= '<table>';
+            $html .= '<thead><tr>';
+            $html .= '<th>S/N</th><th>Name</th><th>Matric No</th><th>Department</th>';
+            $html .= '<th>Gender</th><th>Phone</th><th>Email</th><th>Payment Status</th>';
+            $html .= '</tr></thead><tbody>';
+            
+            foreach ($students as $index => $student) {
+                $html .= '<tr>';
+                $html .= '<td>' . ($index + 1) . '</td>';
+                $html .= '<td>' . trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')) . '</td>';
+                $html .= '<td>' . ($student->matric_no ?? 'N/A') . '</td>';
+                $html .= '<td>' . ($student->department ?? 'N/A') . '</td>';
+                $html .= '<td>' . ($student->gender ?? 'N/A') . '</td>';
+                $html .= '<td>' . ($student->phone ?? 'N/A') . '</td>';
+                $html .= '<td>' . ($student->email ?? 'N/A') . '</td>';
+                $html .= '<td>' . ($student->is_paid ? 'Paid' : 'Unpaid') . '</td>';
+                $html .= '</tr>';
+            }
+            
+            $html .= '</tbody></table></body></html>';
+            
+            // For now, return HTML content as PDF would require additional setup
+            // In production, you would use DomPDF or similar
+            $filename = 'nysc_students_' . date('Y-m-d_H-i-s') . '.html';
+            
+            return response($html, 200, [
+                'Content-Type' => 'text/html',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('PDF export error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF export failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
@@ -516,6 +832,228 @@ class NyscAdminController extends Controller
         $students = $query->paginate($perPage);
         
         return response()->json($students);
+    }
+
+    /**
+     * Get students list for the new students page with class_of_degree filter
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getStudentsList(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $query = StudentNysc::whereNotNull('class_of_degree');
+            
+            // Apply course_study filter
+            if ($request->has('course_study') && $request->course_study !== 'all') {
+                $query->where('course_study', $request->course_study);
+            }
+            
+            // Apply search filter
+            if ($request->has('search') && $request->search) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('fname', 'like', "%{$search}%")
+                      ->orWhere('lname', 'like', "%{$search}%")
+                      ->orWhere('mname', 'like', "%{$search}%")
+                      ->orWhere('matric_no', 'like', "%{$search}%")
+                      ->orWhere('jamb_no', 'like', "%{$search}%");
+                });
+            }
+            
+            // Apply sorting
+            $sortBy = $request->get('sort_by', 'matric_no');
+            $sortOrder = $request->get('sort_order', 'asc');
+            $query->orderBy($sortBy, $sortOrder);
+            
+            // Paginate results
+            $perPage = $request->get('per_page', 50);
+            $students = $query->paginate($perPage);
+            
+            // Get unique course_study values for filter dropdown
+            $courseStudies = StudentNysc::whereNotNull('class_of_degree')
+                ->distinct()
+                ->pluck('course_study')
+                ->filter()
+                ->sort()
+                ->values();
+            
+            return response()->json([
+                'students' => $students,
+                'course_studies' => $courseStudies,
+                'total_count' => StudentNysc::whereNotNull('class_of_degree')->count()
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching students list: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch students list',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export students list as CSV with specific format
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function exportStudentsList(Request $request)
+    {
+        try {
+            $query = StudentNysc::whereNotNull('class_of_degree');
+            
+            // Apply course_study filter
+            if ($request->has('course_study') && $request->course_study !== 'all') {
+                $query->where('course_study', $request->course_study);
+            }
+            
+            $students = $query->orderBy('course_study')->orderBy('matric_no')->get();
+            
+            $format = $request->get('format', 'csv');
+            $courseStudyFilter = $request->get('course_study', 'all');
+            
+            if ($format === 'excel') {
+                return $this->exportStudentsListExcel($students, $courseStudyFilter);
+            } else {
+                return $this->exportStudentsListCsv($students, $courseStudyFilter);
+            }
+        } catch (\Exception $e) {
+            Log::error('Export students list error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Export failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Format text with proper capitalization
+     */
+    private function formatProperCase($text)
+    {
+        if (empty($text)) return '';
+        
+        // Handle special cases for course names and common words
+        $text = strtolower(trim($text));
+        
+        // Split by common delimiters
+        $words = preg_split('/[\s\-_\/]+/', $text);
+        $formattedWords = [];
+        
+        foreach ($words as $word) {
+            if (empty($word)) continue;
+            
+            // Special handling for common abbreviations and words
+            $upperWords = ['IT', 'ICT', 'BSC', 'MSC', 'PHD', 'BA', 'MA', 'HND', 'OND', 'NCE'];
+            $lowerWords = ['of', 'and', 'in', 'the', 'for', 'with', 'to', 'at', 'by'];
+            
+            if (in_array(strtoupper($word), $upperWords)) {
+                $formattedWords[] = strtoupper($word);
+            } elseif (in_array(strtolower($word), $lowerWords) && count($formattedWords) > 0) {
+                $formattedWords[] = strtolower($word);
+            } else {
+                $formattedWords[] = ucfirst($word);
+            }
+        }
+        
+        return implode(' ', $formattedWords);
+    }
+
+    /**
+     * Format gender to M/F
+     */
+    private function formatGender($gender)
+    {
+        if (empty($gender)) return '';
+        
+        $g = strtolower(trim($gender));
+        if ($g === 'male' || $g === 'm') return 'M';
+        if ($g === 'female' || $g === 'f') return 'F';
+        
+        return strtoupper(substr($gender, 0, 1)); // Fallback to first letter uppercase
+    }
+
+    /**
+     * Export students list as CSV
+     *
+     * @param  \Illuminate\Database\Eloquent\Collection  $students
+     * @param  string  $courseStudyFilter
+     * @return \Illuminate\Http\Response
+     */
+    private function exportStudentsListCsv($students, $courseStudyFilter)
+    {
+        $filename = 'students_list_' . ($courseStudyFilter !== 'all' ? str_replace(' ', '_', $courseStudyFilter) . '_' : '') . date('Y-m-d_H-i-s') . '.csv';
+        
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
+            'Pragma' => 'public',
+        ];
+        
+        $callback = function() use ($students) {
+            $file = fopen('php://output', 'w');
+            
+            // Add BOM for proper UTF-8 encoding in Excel
+            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+            
+            // Add headers (exact database fields as requested)
+            fputcsv($file, [
+                'matric_no', 'fname', 'mname', 'lname', 'phone', 'state', 
+                'class_of_degree', 'dob', 'graduation_year', 'gender', 
+                'marital_status', 'jamb_no', 'course_study', 'study_mode'
+            ]);
+            
+            // Add data with proper formatting
+            foreach ($students as $student) {
+                fputcsv($file, [
+                    strtoupper($student->matric_no ?? ''), // CAPITAL LETTERS for matric_no
+                    $this->formatProperCase($student->fname ?? ''), // Proper case for names
+                    $this->formatProperCase($student->mname ?? ''), // Proper case for names
+                    $this->formatProperCase($student->lname ?? ''), // Proper case for names
+                    $student->phone ?? '', // Phone number as text (no apostrophe)
+                    $this->formatProperCase($student->state ?? ''), // Proper case for state
+                    $this->formatProperCase($student->class_of_degree ?? ''), // Proper case for degree
+                    $student->dob ? $student->dob->format('d/m/Y') : '', // dd/mm/yyyy format (e.g., 15/03/1999)
+                    $student->graduation_year ?? '', // Graduation year as text (no apostrophe)
+                    $this->formatGender($student->gender ?? ''), // M/F format for gender
+                    $this->formatProperCase($student->marital_status ?? ''), // Proper case for marital status
+                    strtoupper($student->jamb_no ?? ''), // CAPITAL LETTERS for jamb_no
+                    $this->formatProperCase($student->course_study ?? ''), // Proper case for course
+                    $this->formatProperCase($student->study_mode ?? '') // Proper case for study mode
+                ]);
+            }
+            
+            fclose($file);
+        };
+        
+        return Response::stream($callback, 200, $headers);
+    }
+
+    /**
+     * Export students list as Excel
+     *
+     * @param  \Illuminate\Database\Eloquent\Collection  $students
+     * @param  string  $courseStudyFilter
+     * @return \Illuminate\Http\Response
+     */
+    private function exportStudentsListExcel($students, $courseStudyFilter)
+    {
+        try {
+            $filename = 'students_list_' . ($courseStudyFilter !== 'all' ? str_replace(' ', '_', $courseStudyFilter) . '_' : '') . date('Y-m-d_H-i-s') . '.xlsx';
+            
+            return Excel::download(new StudentsListExport($students), $filename);
+        } catch (\Exception $e) {
+            Log::error('Excel export error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Excel export failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
@@ -2478,5 +3016,736 @@ class NyscAdminController extends Controller
         ];
 
         return $categories[$key] ?? 'general';
+    }
+
+    /**
+     * Normalize matric number for better matching
+     * Handles various formats like VUG/EEC/22/7641, VUG-EEC-22-7641, VUGEEC227641, etc.
+     *
+     * @param string $matricNo
+     * @return array Multiple normalized versions for better matching
+     */
+    private function normalizeMatricNumber(string $matricNo): array
+    {
+        $variations = [];
+        
+        // Original cleaned version
+        $cleaned = strtoupper(str_replace([' ', '\t', '\n', '\r'], '', $matricNo));
+        $variations[] = $cleaned;
+        
+        // Version with forward slashes
+        $withSlashes = str_replace(['-', '_', '.', '\\', '|'], '/', $cleaned);
+        $variations[] = $withSlashes;
+        
+        // Version without any separators
+        $withoutSeparators = preg_replace('/[^A-Z0-9]/', '', $cleaned);
+        $variations[] = $withoutSeparators;
+        
+        // Try to detect and format standard pattern
+        if (preg_match('/^([A-Z]{2,4})[^A-Z0-9]*([A-Z]{2,4})[^A-Z0-9]*(\d{2})[^A-Z0-9]*(\d{3,4})$/', $cleaned, $matches)) {
+            $standardFormat = $matches[1] . '/' . $matches[2] . '/' . $matches[3] . '/' . $matches[4];
+            $variations[] = $standardFormat;
+            
+            // Also add version without separators
+            $variations[] = $matches[1] . $matches[2] . $matches[3] . $matches[4];
+        }
+        
+        // Clean up variations
+        $cleanedVariations = [];
+        foreach ($variations as $variation) {
+            $variation = preg_replace('/\/+/', '/', $variation);
+            $variation = trim($variation, '/');
+            if (!empty($variation) && !in_array($variation, $cleanedVariations)) {
+                $cleanedVariations[] = $variation;
+            }
+        }
+        
+        return $cleanedVariations;
+    }
+
+    /**
+     * Get list of available GRADUANDS files
+     *
+     * @return array
+     */
+    private function getAvailableGraduandsFiles(): array
+    {
+        $storageDir = storage_path('app');
+        $files = [];
+        
+        // Look for files that start with GRADUANDS
+        $pattern = $storageDir . '/GRADUANDS*.docx';
+        $foundFiles = glob($pattern);
+        
+        foreach ($foundFiles as $file) {
+            $fileName = basename($file);
+            $files[] = [
+                'name' => $fileName,
+                'size' => $this->formatFileSize(filesize($file)),
+                'modified' => date('Y-m-d H:i:s', filemtime($file))
+            ];
+        }
+        
+        // Sort by name
+        usort($files, function($a, $b) {
+            return strcmp($a['name'], $b['name']);
+        });
+        
+        return $files;
+    }
+
+    /**
+     * Format file size for display
+     *
+     * @param int $bytes
+     * @return string
+     */
+    private function formatFileSize(int $bytes): string
+    {
+        if ($bytes === 0) return '0 Bytes';
+        
+        $k = 1024;
+        $sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        $i = floor(log($bytes) / log($k));
+        
+        return round($bytes / pow($k, $i), 2) . ' ' . $sizes[$i];
+    }
+
+    /**
+     * Perform reverse scan - check database students against DOCX data
+     * This ensures we don't miss any potential matches
+     *
+     * @param \Illuminate\Database\Eloquent\Collection $students
+     * @param array $docxData
+     * @param array &$matches
+     * @param array &$matchedStudentIds
+     * @return void
+     */
+    private function performReverseScan($students, $docxData, &$matches, &$matchedStudentIds): void
+    {
+        Log::info('Starting reverse scan to catch missed matches');
+        
+        // Create lookup of DOCX data with all variations
+        $docxLookup = [];
+        foreach ($docxData as $record) {
+            $variations = $this->normalizeMatricNumber($record['matric_no']);
+            foreach ($variations as $variation) {
+                $docxLookup[$variation] = $record;
+            }
+        }
+        
+        $reverseScanMatches = 0;
+        
+        // Check each student against DOCX data
+        foreach ($students as $student) {
+            if (in_array($student->id, $matchedStudentIds)) {
+                continue; // Already matched
+            }
+            
+            $studentVariations = $this->normalizeMatricNumber($student->matric_no);
+            
+            foreach ($studentVariations as $variation) {
+                if (isset($docxLookup[$variation])) {
+                    $docxRecord = $docxLookup[$variation];
+                    $matchedStudentIds[] = $student->id;
+                    
+                    $matches[] = [
+                        'student_id' => $student->id,
+                        'matric_no' => $student->matric_no,
+                        'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
+                        'current_class_of_degree' => $student->class_of_degree,
+                        'proposed_class_of_degree' => $docxRecord['proposed_class_of_degree'],
+                        'needs_update' => true,
+                        'approved' => false,
+                        'source' => 'reverse_scan',
+                        'row_number' => $docxRecord['row_number'] ?? null,
+                        'docx_matric' => $docxRecord['matric_no'],
+                        'matched_matric' => $variation,
+                        'all_variations' => $studentVariations
+                    ];
+                    
+                    $reverseScanMatches++;
+                    
+                    Log::info('Reverse scan match found', [
+                        'db_matric' => $student->matric_no,
+                        'docx_matric' => $docxRecord['matric_no'],
+                        'matched_via' => $variation,
+                        'student_id' => $student->id
+                    ]);
+                    
+                    break; // Found match, move to next student
+                }
+            }
+        }
+        
+        Log::info('Reverse scan completed', [
+            'additional_matches_found' => $reverseScanMatches
+        ]);
+    }
+
+    /**
+     * Export student NYSC data to CSV with exact table headers
+     *
+     * @return Response
+     */
+    public function exportStudentNyscCsv()
+    {
+        try {
+            Log::info('Starting CSV export of student NYSC data');
+
+            // Get all student NYSC records with exact table columns
+            $students = StudentNysc::select([
+                'matric_no',
+                'fname',
+                'mname', 
+                'lname',
+                'phone',
+                'state',
+                'class_of_degree',
+                'dob',
+                'graduation_year',
+                'gender',
+                'marital_status',
+                'jamb_no',
+                'course_study',
+                'study_mode'
+            ])->get();
+
+            $filename = 'student_nysc_data_' . date('Y-m-d_H-i-s') . '.csv';
+            
+            $headers = [
+                'Content-Type' => 'text/csv',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+                'Expires' => '0',
+                'Pragma' => 'public',
+            ];
+            
+            $callback = function() use ($students) {
+                $file = fopen('php://output', 'w');
+                
+                // Add BOM for proper UTF-8 encoding in Excel
+                fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+                
+                // Add headers - exact table column names
+                fputcsv($file, [
+                    'matric_no',
+                    'fname',
+                    'mname',
+                    'lname',
+                    'phone',
+                    'state',
+                    'class_of_degree',
+                    'dob',
+                    'graduation_year',
+                    'gender',
+                    'marital_status',
+                    'jamb_no',
+                    'course_study',
+                    'study_mode'
+                ]);
+                
+                // Add data - exact values from database
+                foreach ($students as $student) {
+                    fputcsv($file, [
+                        $student->matric_no,
+                        $student->fname,
+                        $student->mname,
+                        $student->lname,
+                        $student->phone,
+                        $student->state,
+                        $student->class_of_degree,
+                        $student->dob,
+                        $student->graduation_year,
+                        $student->gender,
+                        $student->marital_status,
+                        $student->jamb_no,
+                        $student->course_study,
+                        $student->study_mode
+                    ]);
+                }
+                
+                fclose($file);
+            };
+            
+            Log::info('CSV export completed', ['record_count' => $students->count()]);
+            
+            return response()->stream($callback, 200, $headers);
+            
+        } catch (\Exception $e) {
+            Log::error('CSV export error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'CSV export failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get CSV export statistics
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getCsvExportStats()
+    {
+        try {
+            $totalRecords = StudentNysc::count();
+            $recordsWithClassDegree = StudentNysc::whereNotNull('class_of_degree')->count();
+            $recordsWithoutClassDegree = $totalRecords - $recordsWithClassDegree;
+            
+            return response()->json([
+                'success' => true,
+                'stats' => [
+                    'total_records' => $totalRecords,
+                    'records_with_class_degree' => $recordsWithClassDegree,
+                    'records_without_class_degree' => $recordsWithoutClassDegree,
+                    'completion_percentage' => $totalRecords > 0 ? round(($recordsWithClassDegree / $totalRecords) * 100, 2) : 0
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting CSV export stats', ['error' => $e->getMessage()]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get export statistics'
+            ], 500);
+        }
+    }
+
+    /**
+     * Test CSV export functionality
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function testCsvExport()
+    {
+        try {
+            $user = auth()->user();
+            return response()->json([
+                'success' => true,
+                'message' => 'CSV Export functionality is working',
+                'timestamp' => now(),
+                'user_id' => $user ? $user->id : null,
+                'authenticated' => $user !== null,
+                'user_type' => $user ? get_class($user) : null
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CSV Export test endpoint error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Test failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get students with NULL class_of_degree and match with GRADUANDS files
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getGraduandsMatches(Request $request)
+    {
+        try {
+            // Increase time limit for this operation
+            set_time_limit(300); // 5 minutes
+            
+            Log::info('Starting GRADUANDS matching process');
+            
+            // Get the file to process (default to GRADUANDS.docx)
+            $fileName = $request->input('file', 'GRADUANDS.docx');
+            $filePath = storage_path('app/' . $fileName);
+            
+            // Get list of available GRADUANDS files
+            $availableFiles = $this->getAvailableGraduandsFiles();
+            
+            // Check if file exists
+            if (!file_exists($filePath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "File {$fileName} not found. Available files: " . implode(', ', $availableFiles),
+                    'available_files' => $availableFiles
+                ], 404);
+            }
+
+            // Get students with NULL class_of_degree - COMPREHENSIVE SCAN
+            $studentsWithNullDegree = StudentNysc::where(function($query) {
+                    $query->whereNull('class_of_degree')
+                          ->orWhere('class_of_degree', '')
+                          ->orWhere('class_of_degree', 'NULL')
+                          ->orWhere('class_of_degree', 'null');
+                })
+                ->select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree'])
+                ->get();
+                
+            Log::info('Database scan completed', [
+                'total_students_needing_degree' => $studentsWithNullDegree->count(),
+                'sample_matric_numbers' => $studentsWithNullDegree->take(10)->pluck('matric_no')->toArray()
+            ]);
+
+            if ($studentsWithNullDegree->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'summary' => [
+                        'total_students_with_null_degree' => 0,
+                        'total_extracted_from_docx' => 0,
+                        'total_matches_found' => 0,
+                        'file_last_modified' => date('Y-m-d H:i:s', filemtime($filePath))
+                    ],
+                    'matches' => [],
+                    'message' => 'No students found with NULL class_of_degree'
+                ]);
+            }
+
+            Log::info('Found students with NULL class_of_degree', ['count' => $studentsWithNullDegree->count()]);
+
+            // Process the DOCX file to extract data
+            $docxImportService = new \App\Services\DocxImportService();
+            $result = $docxImportService->processDocxFile($filePath);
+            
+            if (!$result['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process GRADUANDS.docx: ' . $result['error']
+                ], 500);
+            }
+
+            Log::info('DOCX processing completed', ['extracted_count' => count($result['review_data'])]);
+
+            // Create comprehensive lookup arrays for better matching
+            $studentLookup = [];
+            $unmatched = [];
+            
+            foreach ($studentsWithNullDegree as $student) {
+                $originalMatric = strtoupper($student->matric_no);
+                $variations = $this->normalizeMatricNumber($originalMatric);
+                
+                // Store all variations of this matric number
+                foreach ($variations as $variation) {
+                    $studentLookup[$variation] = $student;
+                }
+            }
+            
+            Log::info('Student lookup created', [
+                'total_lookup_entries' => count($studentLookup),
+                'unique_students' => $studentsWithNullDegree->count()
+            ]);
+
+            // Match extracted data with students who have NULL class_of_degree - COMPREHENSIVE MATCHING
+            $matches = [];
+            $matchedStudentIds = []; // Track to avoid duplicates
+            
+            foreach ($result['review_data'] as $extractedData) {
+                $originalMatric = strtoupper($extractedData['matric_no']);
+                $variations = $this->normalizeMatricNumber($originalMatric);
+                
+                $student = null;
+                $matchedMatric = null;
+                
+                // Try all variations until we find a match
+                foreach ($variations as $variation) {
+                    if (isset($studentLookup[$variation])) {
+                        $student = $studentLookup[$variation];
+                        $matchedMatric = $variation;
+                        break;
+                    }
+                }
+                
+                if ($student && !in_array($student->id, $matchedStudentIds)) {
+                    $matchedStudentIds[] = $student->id; // Prevent duplicates
+                    
+                    $matches[] = [
+                        'student_id' => $student->id,
+                        'matric_no' => $student->matric_no,
+                        'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
+                        'current_class_of_degree' => $student->class_of_degree, // Show actual current value
+                        'proposed_class_of_degree' => $extractedData['proposed_class_of_degree'],
+                        'needs_update' => true,
+                        'approved' => false,
+                        'source' => $extractedData['source'] ?? 'docx',
+                        'row_number' => $extractedData['row_number'] ?? null,
+                        'docx_matric' => $originalMatric,
+                        'matched_matric' => $matchedMatric,
+                        'all_variations' => $variations // For debugging
+                    ];
+                    
+                    Log::info('Match found', [
+                        'docx_matric' => $originalMatric,
+                        'db_matric' => $student->matric_no,
+                        'matched_via' => $matchedMatric,
+                        'student_id' => $student->id
+                    ]);
+                } else {
+                    // Store unmatched for debugging
+                    $unmatched[] = [
+                        'docx_matric' => $originalMatric,
+                        'all_variations' => $variations,
+                        'class_of_degree' => $extractedData['proposed_class_of_degree']
+                    ];
+                }
+            }
+
+            // Perform reverse matching - check if any database records were missed
+            $this->performReverseScan($studentsWithNullDegree, $result['review_data'], $matches, $matchedStudentIds);
+            
+            // Log unmatched records for debugging
+            if (!empty($unmatched)) {
+                Log::info('Unmatched DOCX records', [
+                    'count' => count($unmatched),
+                    'sample' => array_slice($unmatched, 0, 10) // Log first 10 unmatched
+                ]);
+            }
+
+            $summary = [
+                'total_students_with_null_degree' => $studentsWithNullDegree->count(),
+                'total_extracted_from_docx' => count($result['review_data']),
+                'total_matches_found' => count($matches),
+                'total_unmatched' => count($unmatched),
+                'current_file' => $fileName,
+                'available_files' => $availableFiles,
+                'file_last_modified' => date('Y-m-d H:i:s', filemtime($filePath))
+            ];
+
+            Log::info('GRADUANDS matching completed', $summary);
+
+            return response()->json([
+                'success' => true,
+                'summary' => $summary,
+                'matches' => $matches,
+                'unmatched' => array_slice($unmatched, 0, 50), // Return first 50 unmatched for review
+                'message' => count($matches) > 0 
+                    ? "Found " . count($matches) . " matches. " . count($unmatched) . " records could not be matched."
+                    : "No matches found for students with NULL class_of_degree"
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in GRADUANDS matching', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error processing GRADUANDS data: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Apply approved class of degree updates for students with NULL values
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function applyGraduandsUpdates(Request $request)
+    {
+        try {
+            $validator = \Validator::make($request->all(), [
+                'updates' => 'required|array',
+                'updates.*.student_id' => 'required|integer',
+                'updates.*.matric_no' => 'required|string',
+                'updates.*.proposed_class_of_degree' => 'required|string',
+                'updates.*.approved' => 'required|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $updates = $request->input('updates');
+            $updatedCount = 0;
+            $errorCount = 0;
+            $errors = [];
+
+            try {
+                \DB::beginTransaction();
+
+                foreach ($updates as $update) {
+                    if (!$update['approved']) {
+                        continue; // Skip non-approved updates
+                    }
+
+                    try {
+                        $student = StudentNysc::find($update['student_id']);
+                        
+                        if (!$student) {
+                            $errorCount++;
+                            $errors[] = "Student not found: {$update['matric_no']}";
+                            continue;
+                        }
+
+                        // Check if class_of_degree needs updating (NULL, empty, or invalid values)
+                        $currentDegree = $student->class_of_degree;
+                        $needsUpdate = $currentDegree === null || 
+                                     $currentDegree === '' || 
+                                     $currentDegree === 'NULL' || 
+                                     $currentDegree === 'null' ||
+                                     empty(trim($currentDegree));
+                        
+                        if ($needsUpdate) {
+                            $oldValue = $student->class_of_degree;
+                            $student->class_of_degree = $update['proposed_class_of_degree'];
+                            
+                            // Force save and check if it actually saved
+                            $saved = $student->save();
+                            
+                            if ($saved) {
+                                $updatedCount++;
+                                
+                                Log::info('Student class_of_degree updated successfully', [
+                                    'student_id' => $student->id,
+                                    'matric_no' => $student->matric_no,
+                                    'old_value' => $oldValue,
+                                    'new_value' => $update['proposed_class_of_degree'],
+                                    'save_result' => $saved
+                                ]);
+                                
+                                // Verify the update by re-fetching
+                                $verifyStudent = StudentNysc::find($student->id);
+                                Log::info('Update verification', [
+                                    'student_id' => $student->id,
+                                    'verified_value' => $verifyStudent->class_of_degree,
+                                    'matches_expected' => $verifyStudent->class_of_degree === $update['proposed_class_of_degree']
+                                ]);
+                            } else {
+                                $errorCount++;
+                                $errors[] = "Failed to save update for {$update['matric_no']}";
+                                Log::error('Failed to save student update', [
+                                    'student_id' => $student->id,
+                                    'matric_no' => $student->matric_no
+                                ]);
+                            }
+                        } else {
+                            Log::info('Student already has valid class_of_degree, skipping', [
+                                'student_id' => $student->id,
+                                'matric_no' => $student->matric_no,
+                                'existing_value' => $student->class_of_degree
+                            ]);
+                        }
+
+                    } catch (\Exception $e) {
+                        $errorCount++;
+                        $errors[] = "Error updating {$update['matric_no']}: " . $e->getMessage();
+                        Log::error('Error updating student', [
+                            'matric_no' => $update['matric_no'],
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+
+                \DB::commit();
+
+                Log::info('Batch update completed', [
+                    'updated_count' => $updatedCount,
+                    'error_count' => $errorCount
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Updates applied successfully. {$updatedCount} records updated.",
+                    'result' => [
+                        'updated_count' => $updatedCount,
+                        'error_count' => $errorCount,
+                        'errors' => $errors
+                    ]
+                ]);
+
+            } catch (\Exception $e) {
+                \DB::rollback();
+                Log::error('Transaction failed during batch update', ['error' => $e->getMessage()]);
+                throw $e;
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Error applying GRADUANDS updates', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error applying updates: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Test method to verify database updates are working
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function testDatabaseUpdate(Request $request)
+    {
+        try {
+            // Get a student with NULL class_of_degree for testing
+            $testStudent = StudentNysc::whereNull('class_of_degree')
+                ->orWhere('class_of_degree', '')
+                ->first();
+            
+            if (!$testStudent) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No test student found with NULL class_of_degree'
+                ]);
+            }
+            
+            $originalValue = $testStudent->class_of_degree;
+            $testValue = 'Test Class - ' . now()->format('H:i:s');
+            
+            Log::info('Starting database update test', [
+                'student_id' => $testStudent->id,
+                'matric_no' => $testStudent->matric_no,
+                'original_value' => $originalValue,
+                'test_value' => $testValue
+            ]);
+            
+            // Attempt to update
+            $testStudent->class_of_degree = $testValue;
+            $saved = $testStudent->save();
+            
+            // Verify the update
+            $verifyStudent = StudentNysc::find($testStudent->id);
+            
+            $result = [
+                'success' => true,
+                'test_results' => [
+                    'student_id' => $testStudent->id,
+                    'matric_no' => $testStudent->matric_no,
+                    'original_value' => $originalValue,
+                    'test_value' => $testValue,
+                    'save_result' => $saved,
+                    'verified_value' => $verifyStudent->class_of_degree,
+                    'update_successful' => $verifyStudent->class_of_degree === $testValue
+                ]
+            ];
+            
+            Log::info('Database update test completed', $result['test_results']);
+            
+            // Revert the test change
+            $verifyStudent->class_of_degree = $originalValue;
+            $verifyStudent->save();
+            
+            return response()->json($result);
+            
+        } catch (\Exception $e) {
+            Log::error('Database update test failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Test failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

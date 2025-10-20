@@ -35,6 +35,7 @@ class StudentNysc extends Model
         'level',
         'graduation_year',
         'cgpa',
+        'class_of_degree',
         'jamb_no',
         'study_mode',
     ];

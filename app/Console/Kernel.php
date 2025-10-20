@@ -4,6 +4,8 @@ namespace App\Console;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Log;
 
 class Kernel extends ConsoleKernel
 {
@@ -20,6 +22,11 @@ class Kernel extends ConsoleKernel
     // Clean up expired NYSC temporary submissions daily
     $schedule->command('nysc:cleanup-temp --force')
              ->dailyAt('02:00')
+             ->timezone('Africa/Lagos');
+             
+    // Process GRADUANDS.docx file every hour
+    $schedule->command('nysc:process-graduands')
+             ->hourly()
              ->timezone('Africa/Lagos');
 }
 

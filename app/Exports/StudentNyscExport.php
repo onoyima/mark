@@ -2,17 +2,13 @@
 
 namespace App\Exports;
 
-use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithColumnWidths;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Font;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
 
-class StudentNyscExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class StudentNyscExport implements FromArray, WithHeadings, WithStyles, WithColumnWidths
 {
     protected $students;
 
@@ -21,125 +17,104 @@ class StudentNyscExport implements FromCollection, WithHeadings, WithMapping, Wi
         $this->students = $students;
     }
 
-    /**
-     * @return \Illuminate\Support\Collection
-     */
-    public function collection()
+    public function array(): array
     {
-        return $this->students;
+        $data = [];
+        
+        foreach ($this->students as $student) {
+            $data[] = [
+                $student->id ?? '',
+                $student->fname ?? '',
+                $student->mname ?? '',
+                $student->lname ?? '',
+                $student->matric_no ?? '',
+                $student->jamb_no ?? '',
+                $student->study_mode ?? '',
+                $student->gender ?? '',
+                $student->dob ? $student->dob->format('Y-m-d') : '',
+                $student->marital_status ?? '',
+                $student->phone ?? '',
+                $student->email ?? '',
+                $student->address ?? '',
+                $student->state ?? '',
+                $student->lga ?? '',
+                $student->course_study ?? '',
+                $student->department ?? '',
+                $student->graduation_year ?? '',
+                $student->cgpa ?? '',
+                $student->class_of_degree ?? '',
+                $student->is_paid ? 'Paid' : 'Unpaid',
+                $student->payment_amount ?? 0,
+                $student->payment_date ? $student->payment_date->format('Y-m-d H:i:s') : '',
+            ];
+        }
+
+        return $data;
     }
 
-    /**
-     * @return array
-     */
     public function headings(): array
     {
         return [
-            'S/N',
-            'Student ID',
-            'Matric Number',
+            'ID',
             'First Name',
             'Middle Name',
             'Last Name',
-            'Email',
-            'Phone',
+            'Matric No',
+            'JAMB No',
+            'Study Mode',
             'Gender',
             'Date of Birth',
+            'Marital Status',
+            'Phone',
+            'Email',
             'Address',
-            'State',
+            'State of Origin',
             'LGA',
-            'Department',
             'Course of Study',
-            'Level',
-            'CGPA',
+            'Department',
             'Graduation Year',
-            'JAMB Number',
-            'Study Mode',
+            'CGPA',
+            'Class of Degree',
             'Payment Status',
             'Payment Amount',
             'Payment Date',
-            'Submission Status',
-            'Registration Date',
-            'Last Updated'
         ];
     }
 
-    /**
-     * @param mixed $student
-     * @return array
-     */
-    public function map($student): array
-    {
-        static $counter = 0;
-        $counter++;
-        
-        $paymentAmount = $student->payments->first()?->amount ?? 0;
-        $paymentDate = $student->payments->first()?->payment_date;
-        
-        return [
-            $counter,
-            $student->student_id,
-            $student->matric_no,
-            $student->fname,
-            $student->mname,
-            $student->lname,
-            $student->email,
-            $student->phone,
-            ucfirst($student->gender ?? ''),
-            $student->dob ? \Carbon\Carbon::parse($student->dob)->format('Y-m-d') : '',
-            $student->address,
-            $student->state,
-            $student->lga,
-            $student->department,
-            $student->course_study,
-            $student->level,
-            $student->cgpa,
-            $student->graduation_year,
-            $student->jamb_no,
-            $student->study_mode,
-            $student->is_paid ? 'Paid' : 'Unpaid',
-            $paymentAmount ? '₦' . number_format($paymentAmount, 2) : '',
-            $paymentDate ? \Carbon\Carbon::parse($paymentDate)->format('Y-m-d H:i:s') : '',
-            $student->is_submitted ? 'Submitted' : 'Not Submitted',
-            $student->created_at ? $student->created_at->format('Y-m-d H:i:s') : '',
-            $student->updated_at ? $student->updated_at->format('Y-m-d H:i:s') : ''
-        ];
-    }
-
-    /**
-     * @param Worksheet $sheet
-     * @return array
-     */
     public function styles(Worksheet $sheet)
     {
         return [
-            // Style the first row as header
-            1 => [
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => 'FFFFFF'],
-                ],
-                'fill' => [
-                    'fillType' => Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '4472C4'],
-                ],
-                'alignment' => [
-                    'horizontal' => Alignment::HORIZONTAL_CENTER,
-                    'vertical' => Alignment::VERTICAL_CENTER,
-                ],
-            ],
-            // Style all cells
-            'A:Z' => [
-                'alignment' => [
-                    'vertical' => Alignment::VERTICAL_CENTER,
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        'color' => ['rgb' => 'CCCCCC'],
-                    ],
-                ],
-            ],
+            // Style the first row as bold text
+            1 => ['font' => ['bold' => true]],
+        ];
+    }
+
+    public function columnWidths(): array
+    {
+        return [
+            'A' => 10,
+            'B' => 15,
+            'C' => 15,
+            'D' => 15,
+            'E' => 15,
+            'F' => 15,
+            'G' => 12,
+            'H' => 10,
+            'I' => 12,
+            'J' => 12,
+            'K' => 15,
+            'L' => 25,
+            'M' => 30,
+            'N' => 15,
+            'O' => 15,
+            'P' => 25,
+            'Q' => 20,
+            'R' => 12,
+            'S' => 10,
+            'T' => 15,
+            'U' => 12,
+            'V' => 12,
+            'W' => 20,
         ];
     }
 }

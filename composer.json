@@ -13,6 +13,7 @@
         "laravel/sanctum": "^4.2",
         "laravel/tinker": "^2.10.1",
         "maatwebsite/excel": "*",
+        "phpoffice/phpword": "^1.4",
         "pusher/pusher-php-server": "^7.2"
     },
     "require-dev": {
