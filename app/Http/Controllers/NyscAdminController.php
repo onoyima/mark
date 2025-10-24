@@ -3749,3 +3749,137 @@ class NyscAdminController extends Controller
         }
     }
 }
+    /**
+     * Get pending payments statistics
+     */
+    public function getPendingPaymentsStats()
+    {
+        try {
+            $verificationService = new \App\Services\PaymentVerificationService();
+            $stats = $verificationService->getPendingPaymentsStats();
+            
+            // Get recent pending payments for display
+            $recentPending = \App\Models\NyscPayment::where('status', 'pending')
+                ->with('studentNysc:id,matric_no,fname,lname')
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->map(function ($payment) {
+                    return [
+                        'id' => $payment->id,
+                        'reference' => $payment->reference,
+                        'amount' => $payment->amount,
+                        'created_at' => $payment->created_at,
+                        'age_minutes' => $payment->created_at->diffInMinutes(now()),
+                        'student' => $payment->studentNysc ? [
+                            'matric_no' => $payment->studentNysc->matric_no,
+                            'name' => trim(($payment->studentNysc->fname ?? '') . ' ' . ($payment->studentNysc->lname ?? ''))
+                        ] : null
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'stats' => $stats,
+                'recent_pending' => $recentPending
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error getting pending payments stats: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify all pending payments
+     */
+    public function verifyPendingPayments(Request $request)
+    {
+        try {
+            $force = $request->boolean('force', false);
+            $limit = $request->integer('limit', 50);
+
+            // Get pending payments to verify
+            $query = \App\Models\NyscPayment::where('status', 'pending');
+            
+            if (!$force) {
+                $query->where('created_at', '<=', now()->subMinutes(5));
+            }
+            
+            $query->where('created_at', '>=', now()->subDays(7));
+            
+            $pendingPayments = $query->orderBy('created_at', 'desc')
+                                   ->limit($limit)
+                                   ->pluck('id')
+                                   ->toArray();
+
+            if (empty($pendingPayments)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'No pending payments found to verify',
+                    'stats' => [
+                        'total' => 0,
+                        'verified' => 0,
+                        'updated' => 0,
+                        'successful' => 0,
+                        'failed' => 0,
+                        'errors' => 0
+                    ]
+                ]);
+            }
+
+            // Dispatch job for background processing
+            \App\Jobs\VerifyPendingPayments::dispatch();
+
+            // Also do immediate verification for smaller batches
+            if (count($pendingPayments) <= 10) {
+                $verificationService = new \App\Services\PaymentVerificationService();
+                $results = $verificationService->verifyBatchPayments($pendingPayments);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Pending payments verified immediately',
+                    'stats' => $results
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Verification job dispatched for background processing',
+                'payments_queued' => count($pendingPayments)
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error verifying pending payments: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify a single payment
+     */
+    public function verifySinglePayment(\App\Models\NyscPayment $payment)
+    {
+        try {
+            $verificationService = new \App\Services\PaymentVerificationService();
+            $result = $verificationService->verifySinglePayment($payment);
+
+            return response()->json([
+                'success' => $result['success'],
+                'message' => $result['message'],
+                'payment' => $result['payment'],
+                'old_status' => $result['old_status'] ?? null,
+                'new_status' => $result['new_status'] ?? null
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error verifying payment: ' . $e->getMessage()
+            ], 500);
+        }
+    }

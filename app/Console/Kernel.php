@@ -28,6 +28,19 @@ class Kernel extends ConsoleKernel
     $schedule->command('nysc:process-graduands')
              ->hourly()
              ->timezone('Africa/Lagos');
+             
+    // Verify pending payments every 10 minutes
+    $schedule->command('nysc:verify-pending-payments')
+             ->everyTenMinutes()
+             ->timezone('Africa/Lagos')
+             ->withoutOverlapping(5); // Prevent overlapping runs, timeout after 5 minutes
+             
+    // More frequent verification during business hours (every 5 minutes)
+    $schedule->command('nysc:verify-pending-payments')
+             ->everyFiveMinutes()
+             ->between('08:00', '18:00')
+             ->timezone('Africa/Lagos')
+             ->withoutOverlapping(3);
 }
 
 

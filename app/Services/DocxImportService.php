@@ -57,12 +57,19 @@ class DocxImportService
                 'review_ready_count' => count($reviewData)
             ]);
             
+            // Count matched vs unmatched
+            $matchedCount = count(array_filter($matchedData, function($item) {
+                return $item['is_matched'] ?? false;
+            }));
+            $unmatchedCount = count($matchedData) - $matchedCount;
+            
             return [
                 'success' => true,
                 'session_id' => Str::uuid()->toString(),
                 'summary' => [
                     'total_extracted' => count($extractedData),
-                    'total_matched' => count($matchedData),
+                    'total_matched' => $matchedCount,
+                    'total_unmatched' => $unmatchedCount,
                     'ready_for_review' => count($reviewData)
                 ],
                 'review_data' => $reviewData
@@ -540,22 +547,30 @@ class DocxImportService
 
     /**
      * Match extracted data with existing students
+     * Returns ALL extracted records with their matching status
      *
      * @param array $extractedData
      * @return array
      */
     public function matchWithExistingStudents(array $extractedData): array
     {
-        $matchedData = [];
+        $allData = [];
+        $matchedCount = 0;
+        
+        // Get all student matric numbers for fuzzy matching (normalized)
+        $allDbMatrics = StudentNysc::pluck('matric_no')->map(function($matric) {
+            return strtoupper(trim(preg_replace('/\s+/', '', $matric)));
+        })->toArray();
         
         foreach ($extractedData as $data) {
             $matricNo = $data['matric_no'];
             
-            // Find student with matching matric number (case-insensitive)
-            $student = StudentNysc::whereRaw('UPPER(matric_no) = ?', [strtoupper($matricNo)])->first();
+            // Try multiple variations for exact matching
+            $student = $this->findExactMatch($matricNo);
             
             if ($student) {
-                $matchedData[] = [
+                // Exact match found
+                $allData[] = [
                     'student_id' => $student->id,
                     'matric_no' => $matricNo,
                     'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
@@ -563,34 +578,82 @@ class DocxImportService
                     'proposed_class_of_degree' => $data['class_of_degree'],
                     'match_confidence' => 'exact',
                     'source' => $data['source'],
-                    'row_number' => $data['row_number']
+                    'row_number' => $data['row_number'],
+                    'is_matched' => true,
+                    'match_type' => 'exact'
                 ];
                 
-                Log::info('Student matched', [
+                $matchedCount++;
+                
+                Log::info('Student matched (exact)', [
                     'matric_no' => $matricNo,
-                    'student_id' => $student->id,
-                    'current_degree' => $student->class_of_degree,
-                    'proposed_degree' => $data['class_of_degree']
+                    'student_id' => $student->id
                 ]);
             } else {
-                Log::warning('No student found for matric number', ['matric_no' => $matricNo]);
+                // Try fuzzy matching with normalized matric number
+                $normalizedMatricNo = strtoupper(trim(preg_replace('/\s+/', '', $matricNo)));
+                $similarMatric = $this->findSimilarMatricNumber($normalizedMatricNo, $allDbMatrics);
+                
+                if ($similarMatric) {
+                    // Find the student with the similar matric (need to reverse lookup since we normalized)
+                    $similarStudent = StudentNysc::whereRaw('UPPER(TRIM(REPLACE(matric_no, " ", ""))) = ?', [$similarMatric])->first();
+                    
+                    if ($similarStudent) {
+                        // Similar match found
+                        $allData[] = [
+                            'student_id' => $similarStudent->id,
+                            'matric_no' => $matricNo,
+                            'student_name' => trim(($similarStudent->fname ?? '') . ' ' . ($similarStudent->mname ?? '') . ' ' . ($similarStudent->lname ?? '')),
+                            'current_class_of_degree' => $similarStudent->class_of_degree,
+                            'proposed_class_of_degree' => $data['class_of_degree'],
+                            'match_confidence' => 'similar',
+                            'source' => $data['source'],
+                            'row_number' => $data['row_number'],
+                            'is_matched' => true,
+                            'match_type' => 'similar',
+                            'db_matric_no' => $similarStudent->matric_no,
+                            'similarity_type' => $this->getSimilarityType($normalizedMatricNo, $similarMatric)
+                        ];
+                        
+                        $matchedCount++;
+                        
+                        Log::info('Student matched (similar)', [
+                            'graduands_matric' => $matricNo,
+                            'db_matric' => $similarStudent->matric_no,
+                            'student_id' => $similarStudent->id
+                        ]);
+                    } else {
+                        // This shouldn't happen, but handle it
+                        $allData[] = $this->createUnmatchedRecord($data, $matricNo);
+                    }
+                } else {
+                    // No match found at all
+                    $allData[] = $this->createUnmatchedRecord($data, $matricNo);
+                    Log::info('Student NOT found in database', ['matric_no' => $matricNo]);
+                }
             }
         }
         
-        return $matchedData;
+        Log::info('Matching completed', [
+            'total_extracted' => count($extractedData),
+            'total_matched' => $matchedCount,
+            'total_unmatched' => count($extractedData) - $matchedCount
+        ]);
+        
+        return $allData;
     }
 
     /**
-     * Prepare matched data for admin review
+     * Prepare all data (matched and unmatched) for admin review
      *
-     * @param array $matchedData
+     * @param array $allData
      * @return array
      */
-    public function prepareReviewData(array $matchedData): array
+    public function prepareReviewData(array $allData): array
     {
         $reviewData = [];
         
-        foreach ($matchedData as $data) {
+        foreach ($allData as $data) {
             $reviewData[] = [
                 'student_id' => $data['student_id'],
                 'matric_no' => $data['matric_no'],
@@ -598,7 +661,9 @@ class DocxImportService
                 'current_class_of_degree' => $data['current_class_of_degree'],
                 'proposed_class_of_degree' => $data['proposed_class_of_degree'],
                 'match_confidence' => $data['match_confidence'],
-                'needs_update' => $data['current_class_of_degree'] !== $data['proposed_class_of_degree'],
+                'is_matched' => $data['is_matched'] ?? false,
+                'match_type' => $data['match_type'] ?? 'unknown',
+                'needs_update' => ($data['is_matched'] ?? false) && ($data['current_class_of_degree'] !== $data['proposed_class_of_degree']),
                 'approved' => false,
                 'source' => $data['source'],
                 'row_number' => $data['row_number']
@@ -676,5 +741,221 @@ class DocxImportService
             'error_count' => $errorCount,
             'errors' => $errors
         ];
+    }
+
+    /**
+     * Find exact match with various formatting variations
+     * Handles case sensitivity, spaces, and other minor formatting differences
+     *
+     * @param string $matricNo
+     * @return StudentNysc|null
+     */
+    private function findExactMatch(string $matricNo): ?StudentNysc
+    {
+        // Create variations of the matric number to try
+        $variations = [
+            $matricNo,                                    // Original
+            strtoupper($matricNo),                       // Upper case
+            strtolower($matricNo),                       // Lower case
+            trim($matricNo),                             // Trimmed
+            strtoupper(trim($matricNo)),                 // Upper case + trimmed
+            preg_replace('/\s+/', '', $matricNo),        // Remove all spaces
+            strtoupper(preg_replace('/\s+/', '', $matricNo)), // Upper case + no spaces
+            preg_replace('/\s+/', ' ', trim($matricNo)), // Normalize spaces
+            strtoupper(preg_replace('/\s+/', ' ', trim($matricNo))), // Upper + normalized spaces
+        ];
+        
+        // Also handle spaces before the last digits (e.g., "VUG/CSC/21/ 5732" -> "VUG/CSC/21/5732")
+        $spaceBeforeDigits = preg_replace('/\/\s+(\d+)$/', '/$1', $matricNo);
+        if ($spaceBeforeDigits !== $matricNo) {
+            $variations[] = $spaceBeforeDigits;
+            $variations[] = strtoupper($spaceBeforeDigits);
+            $variations[] = strtolower($spaceBeforeDigits);
+        }
+        
+        // Remove duplicates
+        $variations = array_unique($variations);
+        
+        // Try each variation
+        foreach ($variations as $variation) {
+            $student = StudentNysc::where('matric_no', $variation)->first();
+            if ($student) {
+                Log::info('Exact match found', [
+                    'original' => $matricNo,
+                    'matched_with' => $variation,
+                    'student_id' => $student->id
+                ]);
+                return $student;
+            }
+        }
+        
+        // Also try case-insensitive search as a last resort for exact matching
+        $student = StudentNysc::whereRaw('UPPER(TRIM(REPLACE(matric_no, " ", ""))) = ?', [
+            strtoupper(trim(preg_replace('/\s+/', '', $matricNo)))
+        ])->first();
+        
+        if ($student) {
+            Log::info('Exact match found (case-insensitive + normalized)', [
+                'original' => $matricNo,
+                'matched_with' => $student->matric_no,
+                'student_id' => $student->id
+            ]);
+            return $student;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Create an unmatched record entry
+     *
+     * @param array $data
+     * @param string $matricNo
+     * @return array
+     */
+    private function createUnmatchedRecord(array $data, string $matricNo): array
+    {
+        return [
+            'student_id' => null,
+            'matric_no' => $matricNo,
+            'student_name' => $data['student_name'] ?? 'Unknown',
+            'current_class_of_degree' => null,
+            'proposed_class_of_degree' => $data['class_of_degree'],
+            'match_confidence' => 'none',
+            'source' => $data['source'],
+            'row_number' => $data['row_number'],
+            'is_matched' => false,
+            'match_type' => 'unmatched'
+        ];
+    }
+
+    /**
+     * Find similar matric number using fuzzy matching
+     * Focuses on matching the final student number (e.g., 7194) and handles case-insensitive department matching
+     *
+     * @param string $target
+     * @param array $candidates
+     * @return string|null
+     */
+    private function findSimilarMatricNumber(string $target, array $candidates): ?string
+    {
+        // Extract the final number from target (e.g., 7194 from VUG/PHL/22/7194)
+        if (!preg_match('/\/(\d+)$/', $target, $targetMatches)) {
+            return null; // No final number found
+        }
+        $targetFinalNumber = $targetMatches[1];
+        
+        // Extract department from target (e.g., PHL from VUG/PHL/22/7194)
+        $targetDepartment = null;
+        if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $target, $deptMatches)) {
+            $targetDepartment = strtoupper($deptMatches[1]);
+        }
+        
+        foreach ($candidates as $candidate) {
+            // Extract the final number from candidate
+            if (!preg_match('/\/(\d+)$/', $candidate, $candidateMatches)) {
+                continue; // Skip if no final number found
+            }
+            $candidateFinalNumber = $candidateMatches[1];
+            
+            // If final numbers don't match, skip
+            if ($targetFinalNumber !== $candidateFinalNumber) {
+                continue;
+            }
+            
+            // Extract department from candidate
+            $candidateDepartment = null;
+            if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $candidate, $candDeptMatches)) {
+                $candidateDepartment = strtoupper($candDeptMatches[1]);
+            }
+            
+            // If we have departments for both, they should match (case-insensitive)
+            if ($targetDepartment && $candidateDepartment) {
+                if ($targetDepartment === $candidateDepartment) {
+                    return $candidate; // Found match: same final number and department
+                }
+            } else {
+                // If we can't extract departments, just match on final number
+                return $candidate;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Determine the type of similarity between two matric numbers
+     *
+     * @param string $graduands
+     * @param string $db
+     * @return string
+     */
+    private function getSimilarityType(string $graduands, string $db): string
+    {
+        // Extract final numbers
+        $graduandsFinalNumber = null;
+        $dbFinalNumber = null;
+        
+        if (preg_match('/\/(\d+)$/', $graduands, $matches)) {
+            $graduandsFinalNumber = $matches[1];
+        }
+        if (preg_match('/\/(\d+)$/', $db, $matches)) {
+            $dbFinalNumber = $matches[1];
+        }
+        
+        // If final numbers match, analyze other differences
+        if ($graduandsFinalNumber === $dbFinalNumber) {
+            $differences = [];
+            
+            // Check for year differences
+            $graduandsYear = null;
+            $dbYear = null;
+            if (preg_match('/\/(\d{2})\/\d+$/', $graduands, $matches)) {
+                $graduandsYear = $matches[1];
+            }
+            if (preg_match('/\/(\d{2})\/\d+$/', $db, $matches)) {
+                $dbYear = $matches[1];
+            }
+            
+            if ($graduandsYear !== $dbYear) {
+                $differences[] = "year ($graduandsYear vs $dbYear)";
+            }
+            
+            // Check for department differences (case-insensitive)
+            $graduandsDept = null;
+            $dbDept = null;
+            if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $graduands, $matches)) {
+                $graduandsDept = strtoupper($matches[1]);
+            }
+            if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $db, $matches)) {
+                $dbDept = strtoupper($matches[1]);
+            }
+            
+            if ($graduandsDept && $dbDept && $graduandsDept !== $dbDept) {
+                $differences[] = "department ($graduandsDept vs $dbDept)";
+            }
+            
+            // Check for prefix differences
+            $graduandsPrefix = '';
+            $dbPrefix = '';
+            if (preg_match('/^(V?UG)\//', $graduands, $matches)) {
+                $graduandsPrefix = $matches[1];
+            }
+            if (preg_match('/^(V?UG)\//', $db, $matches)) {
+                $dbPrefix = $matches[1];
+            }
+            
+            if ($graduandsPrefix !== $dbPrefix) {
+                $differences[] = "prefix ($graduandsPrefix vs $dbPrefix)";
+            }
+            
+            if (empty($differences)) {
+                return 'Same student number with minor formatting differences';
+            } else {
+                return 'Same student number (' . $graduandsFinalNumber . ') with ' . implode(', ', $differences);
+            }
+        }
+        
+        return 'Different student numbers';
     }
 }

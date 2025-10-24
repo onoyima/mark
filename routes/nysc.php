@@ -148,14 +148,25 @@ Route::prefix('nysc')->group(function () {
                 return response()->json(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
             }
         })->withoutMiddleware(['auth:sanctum']);
-        Route::get('docx-import/graduands-matches', [NyscAdminController::class, 'getGraduandsMatches']);
-        Route::post('docx-import/graduands-apply', [NyscAdminController::class, 'applyGraduandsUpdates']);
+        Route::get('docx-import/graduands-matches', [NyscDocxImportController::class, 'getGraduandsMatches']);
+        Route::post('docx-import/graduands-apply', [NyscDocxImportController::class, 'applyGraduandsUpdates']);
+        Route::get('docx-import/data-analysis', [NyscDocxImportController::class, 'getDataAnalysis']);
         Route::post('docx-import/test-db-update', [NyscAdminController::class, 'testDatabaseUpdate']);
         
         // CSV Export routes
         Route::get('csv-export/test', [NyscAdminController::class, 'testCsvExport']);
         Route::get('csv-export/student-data', [NyscAdminController::class, 'exportStudentNyscCsv']);
         Route::get('csv-export/stats', [NyscAdminController::class, 'getCsvExportStats']);
+        
+        // NYSC Upload Analysis routes
+        Route::get('upload-analysis', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'analyzeUploads']);
+        Route::get('upload-analysis/export-unuploaded', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'exportUnuploaded']);
+        Route::get('upload-analysis/test-pdf', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'testPdfFile']);
+        
+        // Payment Verification routes
+        Route::get('payments/pending-stats', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);
+        Route::post('payments/verify-pending', [\App\Http\Controllers\NyscAdminController::class, 'verifyPendingPayments']);
+        Route::post('payments/{payment}/verify', [\App\Http\Controllers\NyscAdminController::class, 'verifySinglePayment']);
     });
 });
 
@@ -166,3 +177,6 @@ Route::get('nysc/export-null-degree-students', [App\Http\Controllers\NyscDocxImp
 Route::get('nysc/test-connection', function() {
     return response()->json(['status' => 'Backend reachable', 'timestamp' => now()]);
 });
+
+// Data analysis endpoint
+Route::get('nysc/data-analysis', [App\Http\Controllers\NyscDocxImportController::class, 'getDataAnalysis']);
