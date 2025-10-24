@@ -3748,7 +3748,7 @@ class NyscAdminController extends Controller
             ], 500);
         }
     }
-}
+
     /**
      * Get pending payments statistics
      */
@@ -3883,3 +3883,4 @@ class NyscAdminController extends Controller
             ], 500);
         }
     }
+}
