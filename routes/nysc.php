@@ -50,6 +50,9 @@ Route::prefix('nysc')->group(function () {
     
     // Public system status endpoint (no authentication required)
     Route::get('system-status', [NyscAdminController::class, 'getPublicSystemStatus']);
+    
+    // Temporary test endpoint for pending payments (no auth)
+    Route::get('test-pending-payments', [NyscAdminController::class, 'getPendingPaymentsStats']);
 
     // ✅ Admin routes (with admin token ability)
     Route::prefix('admin')->middleware(['auth:sanctum'])->group(function () {
@@ -167,6 +170,15 @@ Route::prefix('nysc')->group(function () {
         Route::get('payments/pending-stats', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);
         Route::post('payments/verify-pending', [\App\Http\Controllers\NyscAdminController::class, 'verifyPendingPayments']);
         Route::post('payments/{payment}/verify', [\App\Http\Controllers\NyscAdminController::class, 'verifySinglePayment']);
+        
+        // Test endpoint for pending payments
+        Route::get('payments/test', [\App\Http\Controllers\NyscAdminController::class, 'testPendingPayments']);
+        
+        // Temporary test endpoint without auth
+        Route::get('payments/test-no-auth', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);
+        
+        // Debug route (temporary)
+        Route::get('payments/debug', [\App\Http\Controllers\NyscAdminController::class, 'debugPayments']);
     });
 });
 

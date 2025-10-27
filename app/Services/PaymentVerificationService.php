@@ -18,11 +18,11 @@ class PaymentVerificationService
         try {
             Log::info('Verifying single payment', [
                 'payment_id' => $payment->id,
-                'reference' => $payment->reference,
+                'reference' => $payment->payment_reference,
                 'current_status' => $payment->status
             ]);
 
-            $result = $this->callPaystackVerificationAPI($payment->reference);
+            $result = $this->callPaystackVerificationAPI($payment->payment_reference);
 
             if (!$result['success']) {
                 return [
@@ -58,7 +58,7 @@ class PaymentVerificationService
         } catch (\Exception $e) {
             Log::error('Error verifying single payment', [
                 'payment_id' => $payment->id,
-                'reference' => $payment->reference,
+                'reference' => $payment->payment_reference,
                 'error' => $e->getMessage()
             ]);
 
@@ -118,7 +118,7 @@ class PaymentVerificationService
 
                 $results['details'][] = [
                     'payment_id' => $paymentId,
-                    'reference' => $payment->reference,
+                    'reference' => $payment->payment_reference,
                     'status' => $result['success'] ? 'verified' : 'error',
                     'message' => $result['message']
                 ];
@@ -212,7 +212,7 @@ class PaymentVerificationService
 
         Log::info('Payment status updated', [
             'payment_id' => $payment->id,
-            'reference' => $payment->reference,
+            'reference' => $payment->payment_reference,
             'new_status' => $newStatus,
             'amount' => $transactionData['amount'] ?? null
         ]);
@@ -260,16 +260,21 @@ class PaymentVerificationService
     {
         $now = Carbon::now();
         
+        // Create separate Carbon instances for each query to avoid mutation issues
+        $oneHourAgo = $now->copy()->subHour();
+        $oneDayAgo = $now->copy()->subDay();
+        $fiveMinutesAgo = $now->copy()->subMinutes(5);
+        
         return [
             'total_pending' => NyscPayment::where('status', 'pending')->count(),
             'pending_last_hour' => NyscPayment::where('status', 'pending')
-                ->where('created_at', '>=', $now->subHour())
+                ->where('created_at', '>=', $oneHourAgo)
                 ->count(),
             'pending_last_24h' => NyscPayment::where('status', 'pending')
-                ->where('created_at', '>=', $now->subDay())
+                ->where('created_at', '>=', $oneDayAgo)
                 ->count(),
             'pending_older_than_5min' => NyscPayment::where('status', 'pending')
-                ->where('created_at', '<=', $now->subMinutes(5))
+                ->where('created_at', '<=', $fiveMinutesAgo)
                 ->count(),
             'oldest_pending' => NyscPayment::where('status', 'pending')
                 ->orderBy('created_at', 'asc')
