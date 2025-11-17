@@ -19,6 +19,8 @@ use Maatwebsite\Excel\Facades\Excel;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Exports\StudentNyscExport;
 use App\Exports\StudentsListExport;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class NyscAdminController extends Controller
 {
@@ -4146,10 +4148,15 @@ class NyscAdminController extends Controller
         }
     }
 
-    private function getHiddenStudentIds(): array
+    private function getHiddenConfig(): array
     {
-        $hidden = \App\Models\AdminSetting::get('hidden_payment_students', []);
-        return is_array($hidden) ? array_values(array_unique(array_map('intval', $hidden))) : [];
+        $hiddenAll = \App\Models\AdminSetting::get('hidden_payment_students_all', []);
+        $hiddenDup = \App\Models\AdminSetting::get('hidden_payment_students_duplicates', []);
+        $toArray = function ($v) { return is_array($v) ? array_values(array_unique(array_map('intval', $v))) : []; };
+        return [
+            'all' => $toArray($hiddenAll),
+            'duplicates' => $toArray($hiddenDup),
+        ];
     }
 
     private function canViewPaymentStats($user): bool
@@ -4175,7 +4182,7 @@ class NyscAdminController extends Controller
         if (!$this->canViewPaymentStats($user)) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
-        $hiddenIds = $this->getHiddenStudentIds();
+        $hidden = $this->getHiddenConfig();
         $start = $request->get('dateStart');
         $end = $request->get('dateEnd');
         $method = $request->get('payment_method');
@@ -4183,7 +4190,6 @@ class NyscAdminController extends Controller
         $amountType = $request->get('amount_type'); // 'standard' | 'late'
         $duplicatesFilter = $request->get('duplicates'); // 'all' | 'only' | 'exclude'
         $query = \App\Models\NyscPayment::where('status', 'successful')
-            ->when(!empty($hiddenIds), function ($q) use ($hiddenIds) { return $q->whereNotIn('student_id', $hiddenIds); })
             ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
             ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
             ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
@@ -4196,6 +4202,22 @@ class NyscAdminController extends Controller
         if ($amountType === 'standard') { $query->where('amount', $standardFee); }
         if ($amountType === 'late') { $query->where('amount', $lateFee); }
         $payments = $query->get();
+        if (!empty($hidden['all'])) {
+            $payments = $payments->whereNotIn('student_id', $hidden['all']);
+        }
+        if (!empty($hidden['duplicates'])) {
+            $grouped = $payments->groupBy('student_id');
+            $filtered = collect();
+            foreach ($grouped as $sid => $group) {
+                if (in_array((int)$sid, $hidden['duplicates'])) {
+                    $keep = $group->sortBy('payment_date')->take(1);
+                    $filtered = $filtered->merge($keep);
+                } else {
+                    $filtered = $filtered->merge($group);
+                }
+            }
+            $payments = $filtered;
+        }
         if (in_array($duplicatesFilter, ['only', 'exclude'])) {
             $byStudentDup = $payments->groupBy('student_id');
             $dupIds = $byStudentDup->filter(function ($group) { return $group->count() > 1; })->keys();
@@ -4246,7 +4268,7 @@ class NyscAdminController extends Controller
                 'duplicate_students_count' => $duplicateStudentsCount,
                 'duplicate_payments_count' => $duplicatePaymentsCount,
                 'duplicate_total_amount' => $duplicateAmount,
-                'hidden_students_count' => count($hiddenIds)
+                'hidden_students_count' => count($hidden['all']) + count($hidden['duplicates'])
             ],
             'department_breakdown' => $deptBreakdown,
         ]);
@@ -4258,7 +4280,7 @@ class NyscAdminController extends Controller
         if (!$this->canViewPaymentStats($user)) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
-        $hiddenIds = $this->getHiddenStudentIds();
+        $hidden = $this->getHiddenConfig();
         $start = $request->get('dateStart');
         $end = $request->get('dateEnd');
         $method = $request->get('payment_method');
@@ -4267,7 +4289,6 @@ class NyscAdminController extends Controller
         $amountType = $request->get('amount_type');
         $duplicatesFilter = $request->get('duplicates');
         $query = \App\Models\NyscPayment::where('status', 'successful')
-            ->when(!empty($hiddenIds), function ($q) use ($hiddenIds) { return $q->whereNotIn('student_id', $hiddenIds); })
             ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
             ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
             ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
@@ -4278,47 +4299,110 @@ class NyscAdminController extends Controller
         if ($amountType === 'standard') { $query->where('amount', $standardFee); }
         if ($amountType === 'late') { $query->where('amount', $lateFee); }
         $payments = $query->get();
+        if (!empty($hidden['all'])) {
+            $payments = $payments->whereNotIn('student_id', $hidden['all']);
+        }
+        if (!empty($hidden['duplicates'])) {
+            $grouped = $payments->groupBy('student_id');
+            $filtered = collect();
+            foreach ($grouped as $sid => $group) {
+                if (in_array((int)$sid, $hidden['duplicates'])) {
+                    $keep = $group->sortBy('payment_date')->take(1);
+                    $filtered = $filtered->merge($keep);
+                } else {
+                    $filtered = $filtered->merge($group);
+                }
+            }
+            $payments = $filtered;
+        }
         if (in_array($duplicatesFilter, ['only', 'exclude'])) {
             $byStudentDup = $payments->groupBy('student_id');
             $dupIds = $byStudentDup->filter(function ($group) { return $group->count() > 1; })->keys();
             if ($duplicatesFilter === 'only') { $payments = $payments->whereIn('student_id', $dupIds->all()); }
             if ($duplicatesFilter === 'exclude') { $payments = $payments->whereNotIn('student_id', $dupIds->all()); }
         }
-        $filename = 'payment_statistics_' . now()->format('Y-m-d_H-i-s') . ($format === 'excel' ? '.xlsx' : '.csv');
-        $headers = [
-            'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"'
-        ];
-        $callback = function () use ($payments) {
-            $f = fopen('php://output', 'w');
-            fprintf($f, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            fputcsv($f, ['student_id', 'matric_no', 'name', 'department', 'payment_count', 'total_amount', 'late_fee_count', 'normal_fee_count']);
+        if ($format === 'excel') {
             $standardFee = \App\Models\AdminSetting::get('payment_amount');
             $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
-            $rows = $payments->groupBy('student_id')->map(function ($g) use ($standardFee, $lateFee) {
+            $grouped = $payments->groupBy('student_id');
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('Payment Statistics');
+            $sheet->fromArray(['student_id', 'matric_no', 'name', 'department', 'payment_count', 'total_amount', 'late_fee_count', 'normal_fee_count', 'duplicate_count'], null, 'A1');
+            $rowIndex = 2;
+            foreach ($grouped as $sid => $g) {
                 $first = $g->first();
-                $nysc = $first->studentNysc;
-                if (!$nysc && $first->relationLoaded('student')) {
-                    $student = $first->student;
-                    $nysc = optional($student)->nyscRecord;
-                }
+                $nysc = $first->studentNysc ?: optional($first->student)->nyscRecord;
                 $normalCnt = $g->where('amount', $standardFee)->count();
                 $lateCnt = $g->where('amount', $lateFee)->count();
-                return [
-                    $first->student_id,
-                    optional($nysc)->matric_no,
-                    trim((optional($nysc)->fname . ' ' . optional($nysc)->mname . ' ' . optional($nysc)->lname)),
-                    optional($nysc)->department,
-                    $g->count(),
-                    $g->sum('amount'),
-                    $lateCnt,
-                    $normalCnt,
-                ];
-            });
-            foreach ($rows as $r) { fputcsv($f, $r); }
-            fclose($f);
-        };
-        return response()->stream($callback, 200, $headers);
+                $sheet->setCellValue("A{$rowIndex}", $first->student_id);
+                $sheet->setCellValue("B{$rowIndex}", optional($nysc)->matric_no);
+                $sheet->setCellValue("C{$rowIndex}", trim((optional($nysc)->fname . ' ' . optional($nysc)->mname . ' ' . optional($nysc)->lname)));
+                $sheet->setCellValue("D{$rowIndex}", optional($nysc)->department);
+                $sheet->setCellValue("E{$rowIndex}", $g->count());
+                $sheet->setCellValue("F{$rowIndex}", $g->sum('amount'));
+                $sheet->setCellValue("G{$rowIndex}", $lateCnt);
+                $sheet->setCellValue("H{$rowIndex}", $normalCnt);
+                $sheet->setCellValue("I{$rowIndex}", "=E{$rowIndex}-1");
+                $rowIndex++;
+            }
+            $lastRow = $rowIndex - 1;
+            $summaryStart = $lastRow + 2;
+            $sheet->setCellValue("E{$summaryStart}", 'Summary');
+            $sheet->setCellValue("D" . ($summaryStart + 1), 'Total Students Paid');
+            $sheet->setCellValue("E" . ($summaryStart + 1), "=COUNTA(A2:A{$lastRow})");
+            $sheet->setCellValue("D" . ($summaryStart + 2), 'Total Amount Paid');
+            $sheet->setCellValue("E" . ($summaryStart + 2), "=SUM(F2:F{$lastRow})");
+            $sheet->setCellValue("D" . ($summaryStart + 3), 'Total Duplicates');
+            $sheet->setCellValue("E" . ($summaryStart + 3), "=SUM(I2:I{$lastRow})");
+            $sheet->setCellValue("D" . ($summaryStart + 4), 'Total Normal Fees');
+            $sheet->setCellValue("E" . ($summaryStart + 4), "=SUM(H2:H{$lastRow})");
+            $sheet->setCellValue("D" . ($summaryStart + 5), 'Total Late Fees');
+            $sheet->setCellValue("E" . ($summaryStart + 5), "=SUM(G2:G{$lastRow})");
+            $filename = 'payment_statistics_' . now()->format('Y-m-d_H-i-s') . '.xlsx';
+            $headers = [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"'
+            ];
+            $callback = function () use ($spreadsheet) {
+                $writer = new Xlsx($spreadsheet);
+                $writer->save('php://output');
+            };
+            return response()->stream($callback, 200, $headers);
+        } else {
+            $filename = 'payment_statistics_' . now()->format('Y-m-d_H-i-s') . '.csv';
+            $headers = [
+                'Content-Type' => 'text/csv',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"'
+            ];
+            $callback = function () use ($payments) {
+                $f = fopen('php://output', 'w');
+                fprintf($f, chr(0xEF) . chr(0xBB) . chr(0xBF));
+                fputcsv($f, ['student_id', 'matric_no', 'name', 'department', 'payment_count', 'total_amount', 'late_fee_count', 'normal_fee_count', 'duplicate_count']);
+                $standardFee = \App\Models\AdminSetting::get('payment_amount');
+                $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
+                $rows = $payments->groupBy('student_id')->map(function ($g) use ($standardFee, $lateFee) {
+                    $first = $g->first();
+                    $nysc = $first->studentNysc ?: optional($first->student)->nyscRecord;
+                    $normalCnt = $g->where('amount', $standardFee)->count();
+                    $lateCnt = $g->where('amount', $lateFee)->count();
+                    return [
+                        $first->student_id,
+                        optional($nysc)->matric_no,
+                        trim((optional($nysc)->fname . ' ' . optional($nysc)->mname . ' ' . optional($nysc)->lname)),
+                        optional($nysc)->department,
+                        $g->count(),
+                        $g->sum('amount'),
+                        $lateCnt,
+                        $normalCnt,
+                        max($g->count() - 1, 0),
+                    ];
+                });
+                foreach ($rows as $r) { fputcsv($f, $r); }
+                fclose($f);
+            };
+            return response()->stream($callback, 200, $headers);
+        }
     }
 
     public function hideStudentsPayments(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
@@ -4328,13 +4412,26 @@ class NyscAdminController extends Controller
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
         $ids = $request->input('student_ids', []);
+        $mode = $request->input('mode', 'all');
+        $action = $request->input('action', 'hide');
         if (!is_array($ids) || empty($ids)) {
             return response()->json(['success' => false, 'message' => 'No students selected'], 422);
         }
-        $current = $this->getHiddenStudentIds();
-        $merged = array_values(array_unique(array_merge($current, array_map('intval', $ids))));
-        \App\Models\AdminSetting::set('hidden_payment_students', json_encode($merged), 'json', 'Hidden student payments for stats', 'payment');
-        \Log::info('Payments hidden', ['by' => $user->email, 'student_ids' => $ids]);
-        return response()->json(['success' => true, 'message' => 'Updated', 'hidden_count' => count($merged)]);
+        $keyAll = 'hidden_payment_students_all';
+        $keyDup = 'hidden_payment_students_duplicates';
+        $arrAll = \App\Models\AdminSetting::get($keyAll, []);
+        $arrDup = \App\Models\AdminSetting::get($keyDup, []);
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        if ($mode === 'duplicates') {
+            if ($action === 'hide') { $arrDup = array_values(array_unique(array_merge($arrDup ?: [], $ids))); }
+            if ($action === 'unhide') { $arrDup = array_values(array_diff($arrDup ?: [], $ids)); }
+        } else {
+            if ($action === 'hide') { $arrAll = array_values(array_unique(array_merge($arrAll ?: [], $ids))); }
+            if ($action === 'unhide') { $arrAll = array_values(array_diff($arrAll ?: [], $ids)); }
+        }
+        \App\Models\AdminSetting::set($keyAll, json_encode($arrAll), 'json', 'Hidden student payments (all)', 'payment');
+        \App\Models\AdminSetting::set($keyDup, json_encode($arrDup), 'json', 'Hidden student payments (duplicates)', 'payment');
+        \Log::info('Payments hide toggle', ['by' => $user->email, 'mode' => $mode, 'action' => $action, 'student_ids' => $ids]);
+        return response()->json(['success' => true, 'message' => 'Updated', 'hidden_all' => count($arrAll), 'hidden_duplicates' => count($arrDup)]);
     }
 }
