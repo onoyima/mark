@@ -70,8 +70,11 @@ Route::prefix('nysc')->group(function () {
         Route::get('exports/{format}', [NyscAdminController::class, 'export']);
         Route::get('export-students/{format}', [NyscAdminController::class, 'exportStudents']);
         Route::get('payments', [NyscAdminController::class, 'payments']);
-        Route::get('payments/{id}', [NyscAdminController::class, 'getPaymentDetails']);
-        Route::post('payments/{id}/verify', [NyscAdminController::class, 'verifyPayment']);
+        Route::get('payments/statistics', [NyscAdminController::class, 'getPaymentStatistics']);
+        Route::get('payments/statistics/export', [NyscAdminController::class, 'exportPaymentStatistics']);
+        Route::post('payments/statistics/hide', [NyscAdminController::class, 'hideStudentsPayments']);
+        Route::get('payments/{id}', [NyscAdminController::class, 'getPaymentDetails'])->whereNumber('id');
+        Route::post('payments/{id}/verify', [NyscAdminController::class, 'verifyPayment'])->whereNumber('id');
         Route::post('payments/verify-all', [NyscAdminController::class, 'verifyAllPendingPayments']);
         
         // Submissions management routes
@@ -169,10 +172,7 @@ Route::prefix('nysc')->group(function () {
         // Payment Verification routes
         Route::get('payments/pending-stats', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);
         Route::post('payments/verify-pending', [\App\Http\Controllers\NyscAdminController::class, 'verifyPendingPayments']);
-        Route::post('payments/{payment}/verify', [\App\Http\Controllers\NyscAdminController::class, 'verifySinglePayment']);
-        Route::get('payments/statistics', [\App\Http\Controllers\NyscAdminController::class, 'getPaymentStatistics']);
-        Route::get('payments/statistics/export', [\App\Http\Controllers\NyscAdminController::class, 'exportPaymentStatistics']);
-        Route::post('payments/statistics/hide', [\App\Http\Controllers\NyscAdminController::class, 'hideStudentsPayments']);
+        Route::post('payments/{payment}/verify', [\App\Http\Controllers\NyscAdminController::class, 'verifySinglePayment'])->whereNumber('payment');
         
         // Test endpoint for pending payments
         Route::get('payments/test', [\App\Http\Controllers\NyscAdminController::class, 'testPendingPayments']);

@@ -4187,7 +4187,7 @@ class NyscAdminController extends Controller
             ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
             ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
             ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
-            ->with(['studentNysc']);
+            ->with(['studentNysc', 'student.nyscRecord']);
         if ($department) {
             $query->whereHas('studentNysc', function ($q) use ($department) { $q->where('department', $department); });
         }
@@ -4213,7 +4213,11 @@ class NyscAdminController extends Controller
         $duplicateStudentsCount = $duplicates->count();
         $duplicatePaymentsCount = $duplicates->map->count()->sum();
         $duplicateAmount = $duplicates->flatten()->sum('amount');
-        $deptBreakdown = $payments->groupBy(function ($p) { return optional($p->studentNysc)->department ?: 'N/A'; })
+        $deptBreakdown = $payments->groupBy(function ($p) {
+                $dept = optional($p->studentNysc)->department;
+                if (!$dept) { $dept = optional(optional($p->student)->nyscRecord)->department; }
+                return $dept ?: 'N/A';
+            })
             ->map(function ($group) {
                 return [
                     'count' => $group->count(),
@@ -4267,7 +4271,7 @@ class NyscAdminController extends Controller
             ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
             ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
             ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
-            ->with(['studentNysc']);
+            ->with(['studentNysc', 'student.nyscRecord']);
         if ($department) { $query->whereHas('studentNysc', function ($q) use ($department) { $q->where('department', $department); }); }
         $standardFee = \App\Models\AdminSetting::get('payment_amount');
         $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
@@ -4292,11 +4296,16 @@ class NyscAdminController extends Controller
             $standardFee = \App\Models\AdminSetting::get('payment_amount');
             $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
             $rows = $payments->groupBy('student_id')->map(function ($g) use ($standardFee, $lateFee) {
-                $nysc = $g->first()->studentNysc;
+                $first = $g->first();
+                $nysc = $first->studentNysc;
+                if (!$nysc && $first->relationLoaded('student')) {
+                    $student = $first->student;
+                    $nysc = optional($student)->nyscRecord;
+                }
                 $normalCnt = $g->where('amount', $standardFee)->count();
                 $lateCnt = $g->where('amount', $lateFee)->count();
                 return [
-                    $g->first()->student_id,
+                    $first->student_id,
                     optional($nysc)->matric_no,
                     trim((optional($nysc)->fname . ' ' . optional($nysc)->mname . ' ' . optional($nysc)->lname)),
                     optional($nysc)->department,
