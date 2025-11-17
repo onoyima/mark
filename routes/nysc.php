@@ -170,6 +170,9 @@ Route::prefix('nysc')->group(function () {
         Route::get('payments/pending-stats', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);
         Route::post('payments/verify-pending', [\App\Http\Controllers\NyscAdminController::class, 'verifyPendingPayments']);
         Route::post('payments/{payment}/verify', [\App\Http\Controllers\NyscAdminController::class, 'verifySinglePayment']);
+        Route::get('payments/statistics', [\App\Http\Controllers\NyscAdminController::class, 'getPaymentStatistics']);
+        Route::get('payments/statistics/export', [\App\Http\Controllers\NyscAdminController::class, 'exportPaymentStatistics']);
+        Route::post('payments/statistics/hide', [\App\Http\Controllers\NyscAdminController::class, 'hideStudentsPayments']);
         
         // Test endpoint for pending payments
         Route::get('payments/test', [\App\Http\Controllers\NyscAdminController::class, 'testPendingPayments']);

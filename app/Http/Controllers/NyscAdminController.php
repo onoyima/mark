@@ -4119,18 +4119,14 @@ class NyscAdminController extends Controller
     public function testPendingPayments()
     {
         try {
-            // Direct database query - no models, no relationships, just raw data
             $totalPayments = \DB::table('nysc_payments')->count();
             $pendingCount = \DB::table('nysc_payments')->where('status', 'pending')->count();
             $successfulCount = \DB::table('nysc_payments')->where('status', 'successful')->count();
-            
-            // Get sample pending payments
             $samplePending = \DB::table('nysc_payments')
                 ->where('status', 'pending')
                 ->orderBy('created_at', 'desc')
                 ->limit(5)
                 ->get(['id', 'payment_reference', 'amount', 'status', 'created_at']);
-            
             return response()->json([
                 'success' => true,
                 'database_connection' => 'OK',
@@ -4140,7 +4136,6 @@ class NyscAdminController extends Controller
                 'sample_pending' => $samplePending,
                 'timestamp' => now()->toISOString()
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -4149,5 +4144,188 @@ class NyscAdminController extends Controller
                 'file' => basename($e->getFile())
             ], 500);
         }
+    }
+
+    private function getHiddenStudentIds(): array
+    {
+        $hidden = \App\Models\AdminSetting::get('hidden_payment_students', []);
+        return is_array($hidden) ? array_values(array_unique(array_map('intval', $hidden))) : [];
+    }
+
+    private function canViewPaymentStats($user): bool
+    {
+        if (!$user) return false;
+        $email = strtolower($user->email ?? '');
+        $pEmail = strtolower($user->p_email ?? '');
+        return in_array($email, ['onoyimab@veritas.edu.ng', 'agbudug@veritas.edu.ng'])
+            || in_array($pEmail, ['onoyimab@veritas.edu.ng', 'agbudug@veritas.edu.ng']);
+    }
+
+    private function canHidePayments($user): bool
+    {
+        if (!$user) return false;
+        $email = strtolower($user->email ?? '');
+        $pEmail = strtolower($user->p_email ?? '');
+        return $email === 'onoyimab@veritas.edu.ng' || $pEmail === 'onoyimab@veritas.edu.ng';
+    }
+
+    public function getPaymentStatistics(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = auth()->user();
+        if (!$this->canViewPaymentStats($user)) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+        $hiddenIds = $this->getHiddenStudentIds();
+        $start = $request->get('dateStart');
+        $end = $request->get('dateEnd');
+        $method = $request->get('payment_method');
+        $department = $request->get('department');
+        $amountType = $request->get('amount_type'); // 'standard' | 'late'
+        $duplicatesFilter = $request->get('duplicates'); // 'all' | 'only' | 'exclude'
+        $query = \App\Models\NyscPayment::where('status', 'successful')
+            ->when(!empty($hiddenIds), function ($q) use ($hiddenIds) { return $q->whereNotIn('student_id', $hiddenIds); })
+            ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
+            ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
+            ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
+            ->with(['studentNysc']);
+        if ($department) {
+            $query->whereHas('studentNysc', function ($q) use ($department) { $q->where('department', $department); });
+        }
+        $standardFee = \App\Models\AdminSetting::get('payment_amount');
+        $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
+        if ($amountType === 'standard') { $query->where('amount', $standardFee); }
+        if ($amountType === 'late') { $query->where('amount', $lateFee); }
+        $payments = $query->get();
+        if (in_array($duplicatesFilter, ['only', 'exclude'])) {
+            $byStudentDup = $payments->groupBy('student_id');
+            $dupIds = $byStudentDup->filter(function ($group) { return $group->count() > 1; })->keys();
+            if ($duplicatesFilter === 'only') { $payments = $payments->whereIn('student_id', $dupIds->all()); }
+            if ($duplicatesFilter === 'exclude') { $payments = $payments->whereNotIn('student_id', $dupIds->all()); }
+        }
+        $totalAmount = $payments->sum('amount');
+        $totalPayments = $payments->count();
+        $studentIds = $payments->pluck('student_id')->filter()->unique()->values();
+        $totalStudentsPaid = $studentIds->count();
+        $normal = $payments->where('amount', $standardFee);
+        $late = $payments->where('amount', $lateFee);
+        $byStudent = $payments->groupBy('student_id');
+        $duplicates = $byStudent->filter(function ($group) { return $group->count() > 1; });
+        $duplicateStudentsCount = $duplicates->count();
+        $duplicatePaymentsCount = $duplicates->map->count()->sum();
+        $duplicateAmount = $duplicates->flatten()->sum('amount');
+        $deptBreakdown = $payments->groupBy(function ($p) { return optional($p->studentNysc)->department ?: 'N/A'; })
+            ->map(function ($group) {
+                return [
+                    'count' => $group->count(),
+                    'students' => $group->pluck('student_id')->unique()->count(),
+                    'amount' => $group->sum('amount')
+                ];
+            });
+        return response()->json([
+            'success' => true,
+            'filters' => [
+                'dateStart' => $start,
+                'dateEnd' => $end,
+                'payment_method' => $method,
+                'department' => $department,
+                'amount_type' => $amountType,
+                'duplicates' => $duplicatesFilter ?: 'all'
+            ],
+            'summary' => [
+                'total_successful_amount' => $totalAmount,
+                'total_successful_payments' => $totalPayments,
+                'total_students_paid' => $totalStudentsPaid,
+                'normal_fee_count' => $normal->count(),
+                'normal_fee_amount' => $normal->sum('amount'),
+                'late_fee_count' => $late->count(),
+                'late_fee_amount' => $late->sum('amount'),
+                'duplicate_students_count' => $duplicateStudentsCount,
+                'duplicate_payments_count' => $duplicatePaymentsCount,
+                'duplicate_total_amount' => $duplicateAmount,
+                'hidden_students_count' => count($hiddenIds)
+            ],
+            'department_breakdown' => $deptBreakdown,
+        ]);
+    }
+
+    public function exportPaymentStatistics(\Illuminate\Http\Request $request)
+    {
+        $user = auth()->user();
+        if (!$this->canViewPaymentStats($user)) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+        $hiddenIds = $this->getHiddenStudentIds();
+        $start = $request->get('dateStart');
+        $end = $request->get('dateEnd');
+        $method = $request->get('payment_method');
+        $department = $request->get('department');
+        $format = strtolower($request->get('format', 'csv'));
+        $amountType = $request->get('amount_type');
+        $duplicatesFilter = $request->get('duplicates');
+        $query = \App\Models\NyscPayment::where('status', 'successful')
+            ->when(!empty($hiddenIds), function ($q) use ($hiddenIds) { return $q->whereNotIn('student_id', $hiddenIds); })
+            ->when($start, function ($q) use ($start) { return $q->whereDate('payment_date', '>=', $start); })
+            ->when($end, function ($q) use ($end) { return $q->whereDate('payment_date', '<=', $end); })
+            ->when($method, function ($q) use ($method) { return $q->where('payment_method', $method); })
+            ->with(['studentNysc']);
+        if ($department) { $query->whereHas('studentNysc', function ($q) use ($department) { $q->where('department', $department); }); }
+        $standardFee = \App\Models\AdminSetting::get('payment_amount');
+        $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
+        if ($amountType === 'standard') { $query->where('amount', $standardFee); }
+        if ($amountType === 'late') { $query->where('amount', $lateFee); }
+        $payments = $query->get();
+        if (in_array($duplicatesFilter, ['only', 'exclude'])) {
+            $byStudentDup = $payments->groupBy('student_id');
+            $dupIds = $byStudentDup->filter(function ($group) { return $group->count() > 1; })->keys();
+            if ($duplicatesFilter === 'only') { $payments = $payments->whereIn('student_id', $dupIds->all()); }
+            if ($duplicatesFilter === 'exclude') { $payments = $payments->whereNotIn('student_id', $dupIds->all()); }
+        }
+        $filename = 'payment_statistics_' . now()->format('Y-m-d_H-i-s') . ($format === 'excel' ? '.xlsx' : '.csv');
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"'
+        ];
+        $callback = function () use ($payments) {
+            $f = fopen('php://output', 'w');
+            fprintf($f, chr(0xEF) . chr(0xBB) . chr(0xBF));
+            fputcsv($f, ['student_id', 'matric_no', 'name', 'department', 'payment_count', 'total_amount', 'late_fee_count', 'normal_fee_count']);
+            $standardFee = \App\Models\AdminSetting::get('payment_amount');
+            $lateFee = \App\Models\AdminSetting::get('late_payment_fee');
+            $rows = $payments->groupBy('student_id')->map(function ($g) use ($standardFee, $lateFee) {
+                $nysc = $g->first()->studentNysc;
+                $normalCnt = $g->where('amount', $standardFee)->count();
+                $lateCnt = $g->where('amount', $lateFee)->count();
+                return [
+                    $g->first()->student_id,
+                    optional($nysc)->matric_no,
+                    trim((optional($nysc)->fname . ' ' . optional($nysc)->mname . ' ' . optional($nysc)->lname)),
+                    optional($nysc)->department,
+                    $g->count(),
+                    $g->sum('amount'),
+                    $lateCnt,
+                    $normalCnt,
+                ];
+            });
+            foreach ($rows as $r) { fputcsv($f, $r); }
+            fclose($f);
+        };
+        return response()->stream($callback, 200, $headers);
+    }
+
+    public function hideStudentsPayments(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $user = auth()->user();
+        if (!$this->canHidePayments($user)) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+        $ids = $request->input('student_ids', []);
+        if (!is_array($ids) || empty($ids)) {
+            return response()->json(['success' => false, 'message' => 'No students selected'], 422);
+        }
+        $current = $this->getHiddenStudentIds();
+        $merged = array_values(array_unique(array_merge($current, array_map('intval', $ids))));
+        \App\Models\AdminSetting::set('hidden_payment_students', json_encode($merged), 'json', 'Hidden student payments for stats', 'payment');
+        \Log::info('Payments hidden', ['by' => $user->email, 'student_ids' => $ids]);
+        return response()->json(['success' => true, 'message' => 'Updated', 'hidden_count' => count($merged)]);
     }
 }
