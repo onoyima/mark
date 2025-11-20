@@ -11,6 +11,8 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\StringValueBinder;
 
 class NyscUploadAnalysisController extends Controller
 {
@@ -846,6 +848,7 @@ class NyscUploadAnalysisController extends Controller
                 return \Illuminate\Support\Facades\Response::stream($callback, 200, $headersOut);
             } else {
                 $spreadsheet = new Spreadsheet();
+                Cell::setValueBinder(new StringValueBinder());
                 $sheet = $spreadsheet->getActiveSheet();
                 $sheet->setTitle('UploadAnalysis');
                 // Headers
@@ -857,6 +860,9 @@ class NyscUploadAnalysisController extends Controller
                 $rowNum = 2;
                 foreach ($rows as $row) {
                     foreach ($row as $idx => $val) {
+                        if ($idx === 6) { // class_of_degree column index
+                            $val = preg_replace('/[\x00-\x1F\x7F]/u', '', (string)$val);
+                        }
                         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
                         if ($idx === 7) { // dob column index
                             $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
