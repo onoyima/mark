@@ -835,6 +835,9 @@ class NyscUploadAnalysisController extends Controller
                     fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
                     fputcsv($file, $headers);
                     foreach ($rows as $r) {
+                        if (isset($r[4]) && $r[4] !== '') {
+                            $r[4] = '\'' . $r[4];
+                        }
                         if (isset($r[7]) && $r[7] !== '') {
                             $r[7] = '\'' . $r[7];
                         }
@@ -863,12 +866,11 @@ class NyscUploadAnalysisController extends Controller
                         if ($idx === 6) {
                             $val = preg_replace('/[\x00-\x1F\x7F]/u', '', (string)$val);
                         }
-                        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
-                        if ($idx === 7) {
-                            $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
-                        } else {
-                            $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
+                        if ($idx === 4 && $val !== '') {
+                            $val = '\'' . (string)$val;
                         }
+                        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
+                        $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
                     }
                     $rowNum++;
                 }
