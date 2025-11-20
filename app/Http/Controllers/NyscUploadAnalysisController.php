@@ -10,6 +10,7 @@ use App\Models\StudentNysc;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
 class NyscUploadAnalysisController extends Controller
 {
@@ -756,7 +757,20 @@ class NyscUploadAnalysisController extends Controller
             if (!is_array($uploadedSet)) { $uploadedSet = []; }
 
             $headers = [
-                'MatricNo','Fname','mname','Sname','pphone','StateOfOrigin','ClassOfDegree','DateOfBirth','Status','Gender','MaritalStatus','JambRegNo','IsMilitaryCourseOfStudy','StudyMode'
+                'matric_no',
+                'fname',
+                'mname',
+                'lname',
+                'phone',
+                'state',
+                'class_of_degree',
+                'dob',
+                'graduation_year',
+                'gender',
+                'marital_status',
+                'jamb_no',
+                'course_study',
+                'study_mode'
             ];
 
             $rows = [];
@@ -768,12 +782,12 @@ class NyscUploadAnalysisController extends Controller
                     $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
                     if (!empty($ids)) {
                         foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
-                            $rows[] = $this->mapStudentToExportRow($s, 'uploaded');
+                            $rows[] = $this->mapStudentToExportRow($s);
                         }
                     }
                 } else {
                     $students = StudentNysc::whereIn('student_id', $uploadedSet)->get();
-                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s, 'uploaded'); }
+                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s); }
                 }
             } elseif ($filter === 'not_uploaded') {
                 if ($mode === 'matric_no') {
@@ -782,12 +796,12 @@ class NyscUploadAnalysisController extends Controller
                     $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
                     if (!empty($ids)) {
                         foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
-                            $rows[] = $this->mapStudentToExportRow($s, 'not_uploaded');
+                            $rows[] = $this->mapStudentToExportRow($s);
                         }
                     }
                 } else {
                     $students = StudentNysc::whereNotIn('student_id', $uploadedSet)->get();
-                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s, 'not_uploaded'); }
+                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s); }
                 }
             } elseif ($filter === 'uploaded_not_in_nysc') {
                 $nyscData = $this->getNyscDatabaseData();
@@ -798,7 +812,7 @@ class NyscUploadAnalysisController extends Controller
                 foreach ($diff as $val) {
                     $rows[] = [
                         $mode === 'matric_no' ? $val : '',
-                        '', '', '', '', '', '', '', 'uploaded_not_in_nysc', '', '', '', '', ''
+                        '', '', '', '', '', '', '', '', '', '', '', '', ''
                     ];
                 }
             } else {
@@ -818,7 +832,15 @@ class NyscUploadAnalysisController extends Controller
                     $file = fopen('php://output', 'w');
                     fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
                     fputcsv($file, $headers);
-                    foreach ($rows as $r) { fputcsv($file, $r); }
+                    foreach ($rows as $r) {
+                        if (isset($r[7]) && $r[7] !== '') {
+                            $r[7] = '\'' . $r[7];
+                        }
+                        if (isset($r[8]) && $r[8] !== '') {
+                            $r[8] = '\'' . $r[8];
+                        }
+                        fputcsv($file, $r);
+                    }
                     fclose($file);
                 };
                 return \Illuminate\Support\Facades\Response::stream($callback, 200, $headersOut);
@@ -826,8 +848,24 @@ class NyscUploadAnalysisController extends Controller
                 $spreadsheet = new Spreadsheet();
                 $sheet = $spreadsheet->getActiveSheet();
                 $sheet->setTitle('UploadAnalysis');
-                $sheet->fromArray($headers, null, 'A1');
-                $sheet->fromArray($rows, null, 'A2');
+                // Headers
+                foreach ($headers as $idx => $hdr) {
+                    $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
+                    $sheet->setCellValueExplicit($col . '1', $hdr, DataType::TYPE_STRING);
+                }
+                // Rows with explicit DOB as text
+                $rowNum = 2;
+                foreach ($rows as $row) {
+                    foreach ($row as $idx => $val) {
+                        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
+                        if ($idx === 7) { // dob column index
+                            $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
+                        } else {
+                            $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
+                        }
+                    }
+                    $rowNum++;
+                }
                 $writer = new Xlsx($spreadsheet);
                 $filename = 'upload_analysis_' . $filter . '_' . date('Y-m-d_H-i-s') . '.xlsx';
                 $tmpPath = storage_path('app/exports/' . $filename);
@@ -841,22 +879,64 @@ class NyscUploadAnalysisController extends Controller
         }
     }
 
-    private function mapStudentToExportRow(StudentNysc $s, string $status): array
+    private function mapStudentToExportRow(StudentNysc $s): array
     {
+        $formatName = function($name) {
+            $name = (string)$name;
+            if ($name === '') { return ''; }
+            $lower = strtolower($name);
+            $parts = preg_split('/([\-\']+)/', $lower, -1, PREG_SPLIT_DELIM_CAPTURE);
+            $result = '';
+            for ($i = 0; $i < count($parts); $i++) {
+                $part = $parts[$i];
+                if ($part === '-' || $part === "'" ) {
+                    $result .= $part;
+                } else {
+                    $result .= ucfirst($part);
+                }
+            }
+            return $result;
+        };
+
+        $mapGender = function($gender) {
+            $g = strtolower(trim((string)$gender));
+            if ($g === 'male' || $g === 'm') { return 'M'; }
+            if ($g === 'female' || $g === 'f') { return 'F'; }
+            return '';
+        };
+
+        $dobText = '';
+        if (!empty($s->dob)) {
+            if ($s->dob instanceof \Carbon\Carbon) {
+                $dobText = $s->dob->format('d/m/Y');
+            } else {
+                $ts = strtotime((string)$s->dob);
+                $dobText = $ts ? date('d/m/Y', $ts) : trim((string)$s->dob);
+            }
+        }
+        $gradText = '';
+        if (isset($s->graduation_year)) {
+            $gy = (string)$s->graduation_year;
+            if (trim($gy) === '2025') {
+                $gradText = '31/07/2025';
+            } else {
+                $gradText = $gy;
+            }
+        }
         return [
             $s->matric_no ?? '',
-            $s->fname ?? '',
-            $s->mname ?? '',
-            $s->lname ?? '',
+            $formatName($s->fname ?? ''),
+            $formatName($s->mname ?? ''),
+            $formatName($s->lname ?? ''),
             $s->phone ?? '',
             $s->state ?? '',
             $s->class_of_degree ?? '',
-            $s->dob ? (is_string($s->dob) ? $s->dob : $s->dob->format('Y-m-d')) : '',
-            $status,
-            $s->gender ?? '',
+            $dobText,
+            $gradText,
+            $mapGender($s->gender ?? ''),
             $s->marital_status ?? '',
             $s->jamb_no ?? '',
-            '',
+            $s->course_study ?? '',
             $s->study_mode ?? ''
         ];
     }
