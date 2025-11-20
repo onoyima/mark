@@ -17,6 +17,10 @@ class NyscDuplicatePaymentController extends Controller
     public function getDuplicatePayments(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
+            $user = auth()->user();
+            if (!($user && (int)($user->id ?? 0) === 596)) {
+                return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+            }
             $search = $request->get('search', '');
             
             // Find students with more than one successful payment

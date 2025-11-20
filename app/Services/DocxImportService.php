@@ -75,7 +75,7 @@ class DocxImportService
                 'review_data' => $reviewData
             ];
             
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Error processing DOCX file', [
                 'file_path' => $filePath,
                 'error' => $e->getMessage(),
@@ -263,9 +263,18 @@ class DocxImportService
         
         // Extract text content from various element types
         if (method_exists($element, 'getText')) {
-            $text = $element->getText();
+            $maybeText = $element->getText();
+            $text = is_string($maybeText) ? $maybeText : '';
         } elseif ($element instanceof TextRun) {
-            $text = $element->getText();
+            // TextRun doesn't reliably provide a flat text string; concatenate child texts
+            $buffer = '';
+            foreach ($element->getElements() as $textElement) {
+                if (method_exists($textElement, 'getText')) {
+                    $t = $textElement->getText();
+                    if (is_string($t)) { $buffer .= $t . ' '; }
+                }
+            }
+            $text = trim($buffer);
         }
         
         if (empty($text)) {
@@ -280,7 +289,7 @@ class DocxImportService
         ];
         
         foreach ($patterns as $pattern) {
-            if (preg_match_all($pattern, $text, $matches, PREG_SET_ORDER)) {
+            if ($text !== '' && preg_match_all($pattern, $text, $matches, PREG_SET_ORDER)) {
                 foreach ($matches as $match) {
                     $matricNo = trim($match[1]);
                     $classOfDegree = trim($match[2]);
@@ -399,13 +408,15 @@ class DocxImportService
         
         try {
             if (method_exists($element, 'getText')) {
-                $text .= $element->getText() . ' ';
+                $t = $element->getText();
+                if (is_string($t)) { $text .= $t . ' '; }
             }
             
             if ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
                 foreach ($element->getElements() as $textElement) {
                     if (method_exists($textElement, 'getText')) {
-                        $text .= $textElement->getText() . ' ';
+                        $tt = $textElement->getText();
+                        if (is_string($tt)) { $text .= $tt . ' '; }
                     }
                 }
             }
@@ -473,11 +484,13 @@ class DocxImportService
         
         foreach ($cell->getElements() as $element) {
             if (method_exists($element, 'getText')) {
-                $text .= $element->getText() . ' ';
+                $t = $element->getText();
+                if (is_string($t)) { $text .= $t . ' '; }
             } elseif ($element instanceof TextRun) {
                 foreach ($element->getElements() as $textElement) {
                     if (method_exists($textElement, 'getText')) {
-                        $text .= $textElement->getText() . ' ';
+                        $tt = $textElement->getText();
+                        if (is_string($tt)) { $text .= $tt . ' '; }
                     }
                 }
             }

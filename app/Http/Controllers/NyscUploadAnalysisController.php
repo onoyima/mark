@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Models\StudentNysc;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class NyscUploadAnalysisController extends Controller
 {
@@ -21,12 +23,13 @@ class NyscUploadAnalysisController extends Controller
     {
         try {
             // Get the file to analyze from request parameter
-            $fileName = $request->query('file', 'uploaded.xlsx');
+            $fileName = $request->query('file', 'uploaded_pcms.xlsx');
             
             // Define available files
             $availableFiles = [
                 'uploaded.xlsx' => storage_path('app/uploaded.xlsx'),
                 'uploaded.xls' => storage_path('app/uploaded.xls'),
+                'uploaded_pcms.xlsx' => storage_path('app/uploaded_pcms.xlsx'),
                 'all.pdf' => storage_path('app/all.pdf')
             ];
             
@@ -52,7 +55,7 @@ class NyscUploadAnalysisController extends Controller
             if (!$filePath) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'No upload files found. Looking for: uploaded.xlsx, uploaded.xls, or all.pdf in storage/app/',
+                    'message' => 'No upload files found. Looking for: uploaded.xlsx, uploaded.xls, uploaded_pcms.xlsx, or all.pdf in storage/app/',
                     'available_files' => array_keys(array_filter($availableFiles, 'file_exists'))
                 ], 404);
             }
@@ -81,6 +84,9 @@ class NyscUploadAnalysisController extends Controller
                 'total_sheets' => $totalSheets,
                 'sheet_names' => $worksheetNames
             ]);
+
+            // Determine analysis mode
+            $analysisMode = ($actualFileName === 'uploaded_pcms.xlsx') ? 'matric_no' : 'student_id';
 
             // Process all sheets
             $allExtractionResults = [];
@@ -128,8 +134,12 @@ class NyscUploadAnalysisController extends Controller
                         'column' => $matricColumnIndex
                     ]);
                     
-                    // Extract student IDs from this sheet
-                    $sheetExtractionResult = $this->extractStudentIds($worksheet, $matricColumnIndex, $highestRow, $sheetName);
+                    // Extract values from this sheet based on mode
+                    if ($analysisMode === 'matric_no') {
+                        $sheetExtractionResult = $this->extractMatricNos($worksheet, $matricColumnIndex, $highestRow, $sheetName);
+                    } else {
+                        $sheetExtractionResult = $this->extractStudentIds($worksheet, $matricColumnIndex, $highestRow, $sheetName);
+                    }
                     $allExtractionResults[] = $sheetExtractionResult;
                     
                     Log::info("Sheet {$sheetName} processed successfully", [
@@ -156,7 +166,11 @@ class NyscUploadAnalysisController extends Controller
                         
                         if ($hasData) {
                             Log::info("Attempting to process column {$col} as potential matric column in sheet {$sheetName}");
-                            $sheetExtractionResult = $this->extractStudentIds($worksheet, $col, $highestRow, $sheetName);
+                            if ($analysisMode === 'matric_no') {
+                                $sheetExtractionResult = $this->extractMatricNos($worksheet, $col, $highestRow, $sheetName);
+                            } else {
+                                $sheetExtractionResult = $this->extractStudentIds($worksheet, $col, $highestRow, $sheetName);
+                            }
                             
                             // Only use this result if we found some valid IDs
                             if (count($sheetExtractionResult['unique_uploaded_ids']) > 0) {
@@ -178,10 +192,12 @@ class NyscUploadAnalysisController extends Controller
             $nyscData = $this->getNyscDatabaseData();
             
             // Perform cross-reference analysis
+            $comparisonSet = ($analysisMode === 'matric_no') ? $nyscData['matric_numbers'] : $nyscData['student_ids'];
             $analysis = $this->performCrossReferenceAnalysis(
                 $combinedExtractionResult['unique_uploaded_ids'],
-                $nyscData['student_ids'],
-                $nyscData['records']
+                $comparisonSet,
+                $nyscData['records'],
+                $analysisMode
             );
 
             // Calculate statistics
@@ -215,7 +231,7 @@ class NyscUploadAnalysisController extends Controller
                 'extraction' => $combinedExtractionResult,
                 'analysis' => $analysis,
                 'statistics' => $statistics,
-                'all_data' => $this->getAllData($analysis, $nyscData['records']),
+                'all_data' => $this->getAllData($analysis, $nyscData['records'], $analysisMode),
                 'sheet_details' => $allExtractionResults,
                 'debug_info' => [
                     'sheets_with_data' => count($allExtractionResults),
@@ -264,8 +280,7 @@ class NyscUploadAnalysisController extends Controller
                     stripos($headerValue, 'matriculation') !== false ||
                     stripos($headerValue, 'reg') !== false ||
                     stripos($headerValue, 'registration') !== false ||
-                    stripos($headerValue, 'student') !== false ||
-                    stripos($headerValue, 'id') !== false
+                    stripos($headerValue, 'student') !== false
                 )) {
                     Log::info("Found potential matric column", [
                         'sheet' => $worksheet->getTitle(),
@@ -484,10 +499,12 @@ class NyscUploadAnalysisController extends Controller
             ->get();
         
         $studentIds = $records->pluck('student_id')->toArray();
+        $matricNumbers = $records->pluck('matric_no')->filter()->map(function($m){ return trim((string)$m); })->toArray();
         
         return [
             'total' => $records->count(),
             'student_ids' => $studentIds,
+            'matric_numbers' => $matricNumbers,
             'records' => $records
         ];
     }
@@ -495,22 +512,80 @@ class NyscUploadAnalysisController extends Controller
     /**
      * Perform cross-reference analysis
      */
-    private function performCrossReferenceAnalysis($uniqueUploadedIds, $nyscStudentIds, $nyscRecords): array
+    private function performCrossReferenceAnalysis($uniqueUploadedValues, $nyscValues, $nyscRecords, $mode = 'student_id'): array
     {
-        // Find matches
-        $matched = array_intersect($uniqueUploadedIds, $nyscStudentIds);
-        
-        // Find unuploaded
-        $unuploaded = array_diff($nyscStudentIds, $uniqueUploadedIds);
-        
-        // Find uploaded but not in NYSC
-        $uploadedButNotInNysc = array_diff($uniqueUploadedIds, $nyscStudentIds);
-        
-        return [
-            'matched' => array_values($matched),
-            'unuploaded' => array_values($unuploaded),
-            'uploaded_but_not_in_nysc' => array_values($uploadedButNotInNysc)
-        ];
+        if ($mode === 'matric_no') {
+            $normalize = function($v){ return strtoupper(trim((string)$v)); };
+            $uploadedMatric = array_map($normalize, $uniqueUploadedValues);
+            $nyscMatric = array_map($normalize, $nyscValues);
+
+            // Extract numeric suffix IDs from uploaded matric strings
+            $extractId = function($s){
+                if (!is_string($s)) return null;
+                $s = trim($s);
+                if (preg_match('/\/(\d+)$/', $s, $m)) { return (int)$m[1]; }
+                if (preg_match('/(\d{4,})$/', $s, $m)) { return (int)$m[1]; }
+                return null;
+            };
+            $uploadedSuffixIds = array_unique(array_values(array_filter(array_map($extractId, $uniqueUploadedValues), function($v){ return $v !== null; })));
+            $nyscStudentIds = $nyscRecords->pluck('student_id')->toArray();
+
+            // Matches by matric string
+            $matchedByMatric = array_values(array_intersect($uploadedMatric, $nyscMatric));
+            // Matches by student_id suffix
+            $matchedById = array_values(array_intersect($uploadedSuffixIds, $nyscStudentIds));
+
+            // Build matched uploaded matric keys: any uploaded item that matched either condition
+            $matchedUploadedKeys = [];
+            $uploadedMatricSet = array_flip($uploadedMatric);
+            foreach ($uploadedMatric as $mat) {
+                $id = $extractId($mat);
+                $matricMatch = isset(array_flip($matchedByMatric)[$mat]);
+                $idMatch = ($id !== null) && isset(array_flip($matchedById)[$id]);
+                if ($matricMatch || $idMatch) { $matchedUploadedKeys[] = $mat; }
+            }
+
+            // Determine covered student IDs in NYSC DB
+            $nyscMatricToId = [];
+            foreach ($nyscRecords as $rec) {
+                $nyscMatricToId[$normalize($rec->matric_no)] = (int)$rec->student_id;
+            }
+            $coveredIdsByMatric = [];
+            foreach ($matchedByMatric as $m) {
+                if (isset($nyscMatricToId[$m])) { $coveredIdsByMatric[] = $nyscMatricToId[$m]; }
+            }
+            $coveredStudentIds = array_values(array_unique(array_merge($coveredIdsByMatric, $matchedById)));
+
+            // Unuploaded: NYSC student_ids not covered by uploaded (by either method)
+            $unuploadedIds = array_values(array_diff($nyscStudentIds, $coveredStudentIds));
+
+            // Uploaded but not in NYSC: uploaded matric strings where neither condition matched
+            $uploadedButNotInNysc = [];
+            foreach ($uploadedMatric as $mat) {
+                $id = $extractId($mat);
+                $matricMatch = in_array($mat, $matchedByMatric, true);
+                $idMatch = ($id !== null) && in_array($id, $matchedById, true);
+                if (!$matricMatch && !$idMatch) { $uploadedButNotInNysc[] = $mat; }
+            }
+
+            return [
+                'matched' => array_values(array_unique($matchedUploadedKeys)),
+                'unuploaded' => $unuploadedIds,
+                'uploaded_but_not_in_nysc' => array_values(array_unique($uploadedButNotInNysc))
+            ];
+        } else {
+            // student_id mode (legacy)
+            $uploaded = $uniqueUploadedValues;
+            $nysc = $nyscValues;
+            $matched = array_intersect($uploaded, $nysc);
+            $unuploaded = array_diff($nysc, $uploaded);
+            $uploadedButNotInNysc = array_diff($uploaded, $nysc);
+            return [
+                'matched' => array_values($matched),
+                'unuploaded' => array_values($unuploaded),
+                'uploaded_but_not_in_nysc' => array_values($uploadedButNotInNysc)
+            ];
+        }
     }
 
     /**
@@ -556,7 +631,7 @@ class NyscUploadAnalysisController extends Controller
     /**
      * Get all data for display (not just samples)
      */
-    private function getAllData($analysis, $nyscRecords): array
+    private function getAllData($analysis, $nyscRecords, $mode = 'student_id'): array
     {
         $allData = [
             'matched' => [],
@@ -565,11 +640,24 @@ class NyscUploadAnalysisController extends Controller
         ];
         
         // All matched students
-        foreach ($analysis['matched'] as $studentId) {
-            $student = $nyscRecords->firstWhere('student_id', $studentId);
+        foreach ($analysis['matched'] as $key) {
+            if ($mode === 'matric_no') {
+                $student = $nyscRecords->first(function($s) use ($key) {
+                    return strtoupper(trim((string)$s->matric_no)) === strtoupper(trim((string)$key));
+                });
+                if (!$student) {
+                    // Try by suffix ID
+                    $id = null;
+                    if (preg_match('/\/(\d+)$/', (string)$key, $m)) { $id = (int)$m[1]; }
+                    elseif (preg_match('/(\d{4,})$/', (string)$key, $m)) { $id = (int)$m[1]; }
+                    if ($id) { $student = $nyscRecords->firstWhere('student_id', $id); }
+                }
+            } else {
+                $student = $nyscRecords->firstWhere('student_id', $key);
+            }
             if ($student) {
                 $allData['matched'][] = [
-                    'student_id' => $studentId,
+                    'student_id' => $student->student_id,
                     'matric_no' => $student->matric_no,
                     'name' => trim(($student->fname ?? '') . ' ' . ($student->lname ?? '')),
                     'course_study' => $student->course_study
@@ -578,11 +666,16 @@ class NyscUploadAnalysisController extends Controller
         }
         
         // All unuploaded students
-        foreach ($analysis['unuploaded'] as $studentId) {
-            $student = $nyscRecords->firstWhere('student_id', $studentId);
+        foreach ($analysis['unuploaded'] as $key) {
+            if ($mode === 'matric_no') {
+                // In matric mode, unuploaded keys are student_id integers
+                $student = $nyscRecords->firstWhere('student_id', $key);
+            } else {
+                $student = $nyscRecords->firstWhere('student_id', $key);
+            }
             if ($student) {
                 $allData['unuploaded'][] = [
-                    'student_id' => $studentId,
+                    'student_id' => $student->student_id,
                     'matric_no' => $student->matric_no,
                     'name' => trim(($student->fname ?? '') . ' ' . ($student->lname ?? '')),
                     'course_study' => $student->course_study
@@ -591,14 +684,181 @@ class NyscUploadAnalysisController extends Controller
         }
         
         // All uploaded but not in NYSC
-        foreach ($analysis['uploaded_but_not_in_nysc'] as $studentId) {
+        foreach ($analysis['uploaded_but_not_in_nysc'] as $value) {
             $allData['uploaded_but_not_in_nysc'][] = [
-                'student_id' => $studentId,
+                'value' => $value,
                 'note' => 'Found in upload but not in NYSC database'
             ];
         }
         
         return $allData;
+    }
+
+    /**
+     * Extract raw MatricNo values from Excel
+     */
+    private function extractMatricNos($worksheet, $matricColumnIndex, $highestRow, $sheetName = 'Sheet1'): array
+    {
+        $uploadedMatricNos = [];
+        $invalidEntries = [];
+        $totalExcelRows = 0;
+        $extractedSamples = [];
+
+        $startRow = $this->findDataStartRow($worksheet, $matricColumnIndex, $highestRow);
+
+        for ($row = $startRow; $row <= $highestRow; $row++) {
+            $cellValue = $worksheet->getCell($matricColumnIndex . $row)->getValue();
+            $raw = trim((string)$cellValue);
+            if ($raw === '') { continue; }
+            $totalExcelRows++;
+
+            // Keep raw matric string intact, including hyphens
+            $uploadedMatricNos[] = $raw;
+            if (count($extractedSamples) < 10) {
+                $extractedSamples[] = [
+                    'sheet' => $sheetName,
+                    'row' => $row,
+                    'matric_no' => $raw
+                ];
+            }
+        }
+
+        $uniqueUploaded = array_values(array_unique(array_map(function($v){ return trim((string)$v); }, $uploadedMatricNos)));
+
+        return [
+            'sheet_name' => $sheetName,
+            'total_excel_rows' => $totalExcelRows,
+            'valid_student_ids' => count($uploadedMatricNos),
+            'unique_uploaded_ids' => $uniqueUploaded,
+            'invalid_matric_numbers' => $invalidEntries,
+            'duplicate_count' => count($uploadedMatricNos) - count($uniqueUploaded),
+            'extraction_samples' => $extractedSamples
+        ];
+    }
+
+    /**
+     * Export filtered upload analysis list (uploaded, not_uploaded, uploaded_not_in_nysc)
+     */
+    public function exportUploadFiltered(Request $request)
+    {
+        try {
+            $fileName = $request->query('file', 'uploaded_pcms.xlsx');
+            $filter = $request->query('filter', 'uploaded');
+            $format = $request->query('format', 'excel');
+
+            $request->merge(['file' => $fileName]);
+            $analysisResponse = $this->analyzeUploads($request);
+            $analysisData = $analysisResponse->getData(true);
+            if (!$analysisData['success']) { return $analysisResponse; }
+
+            $mode = ($analysisData['file_info']['name'] ?? '') === 'uploaded_pcms.xlsx' ? 'matric_no' : 'student_id';
+            $uploadedSet = $analysisData['extraction']['unique_uploaded_ids'] ?? [];
+            if (!is_array($uploadedSet)) { $uploadedSet = []; }
+
+            $headers = [
+                'MatricNo','Fname','mname','Sname','pphone','StateOfOrigin','ClassOfDegree','DateOfBirth','Status','Gender','MaritalStatus','JambRegNo','IsMilitaryCourseOfStudy','StudyMode'
+            ];
+
+            $rows = [];
+
+            if ($filter === 'uploaded') {
+                if ($mode === 'matric_no') {
+                    $matchedRecords = $analysisData['all_data']['matched'] ?? [];
+                    $ids = array_values(array_unique(array_map(function($r){ return (int)($r['student_id'] ?? 0); }, $matchedRecords)));
+                    $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
+                    if (!empty($ids)) {
+                        foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
+                            $rows[] = $this->mapStudentToExportRow($s, 'uploaded');
+                        }
+                    }
+                } else {
+                    $students = StudentNysc::whereIn('student_id', $uploadedSet)->get();
+                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s, 'uploaded'); }
+                }
+            } elseif ($filter === 'not_uploaded') {
+                if ($mode === 'matric_no') {
+                    $unuploadedRecords = $analysisData['all_data']['unuploaded'] ?? [];
+                    $ids = array_values(array_unique(array_map(function($r){ return (int)($r['student_id'] ?? 0); }, $unuploadedRecords)));
+                    $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
+                    if (!empty($ids)) {
+                        foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
+                            $rows[] = $this->mapStudentToExportRow($s, 'not_uploaded');
+                        }
+                    }
+                } else {
+                    $students = StudentNysc::whereNotIn('student_id', $uploadedSet)->get();
+                    foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s, 'not_uploaded'); }
+                }
+            } elseif ($filter === 'uploaded_not_in_nysc') {
+                $nyscData = $this->getNyscDatabaseData();
+                $comparisonSet = $mode === 'matric_no' ? ($nyscData['matric_numbers'] ?? []) : ($nyscData['student_ids'] ?? []);
+                if (!is_array($comparisonSet)) { $comparisonSet = []; }
+                $uploadedNormalized = array_map(function($v) use ($mode) { return $mode==='matric_no'?trim((string)$v):$v; }, $uploadedSet);
+                $diff = array_values(array_diff($uploadedNormalized, $comparisonSet));
+                foreach ($diff as $val) {
+                    $rows[] = [
+                        $mode === 'matric_no' ? $val : '',
+                        '', '', '', '', '', '', '', 'uploaded_not_in_nysc', '', '', '', '', ''
+                    ];
+                }
+            } else {
+                return response()->json(['success' => false, 'message' => 'Invalid filter'], 400);
+            }
+
+            if ($format === 'csv') {
+                $filename = 'upload_analysis_' . $filter . '_' . date('Y-m-d_H-i-s') . '.csv';
+                $headersOut = [
+                    'Content-Type' => 'text/csv',
+                    'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                    'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+                    'Expires' => '0',
+                    'Pragma' => 'public',
+                ];
+                $callback = function() use ($headers, $rows) {
+                    $file = fopen('php://output', 'w');
+                    fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+                    fputcsv($file, $headers);
+                    foreach ($rows as $r) { fputcsv($file, $r); }
+                    fclose($file);
+                };
+                return \Illuminate\Support\Facades\Response::stream($callback, 200, $headersOut);
+            } else {
+                $spreadsheet = new Spreadsheet();
+                $sheet = $spreadsheet->getActiveSheet();
+                $sheet->setTitle('UploadAnalysis');
+                $sheet->fromArray($headers, null, 'A1');
+                $sheet->fromArray($rows, null, 'A2');
+                $writer = new Xlsx($spreadsheet);
+                $filename = 'upload_analysis_' . $filter . '_' . date('Y-m-d_H-i-s') . '.xlsx';
+                $tmpPath = storage_path('app/exports/' . $filename);
+                if (!is_dir(dirname($tmpPath))) { @mkdir(dirname($tmpPath), 0777, true); }
+                $writer->save($tmpPath);
+                return response()->download($tmpPath)->deleteFileAfterSend(true);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error exporting filtered upload analysis', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Export failed: ' . $e->getMessage()], 500);
+        }
+    }
+
+    private function mapStudentToExportRow(StudentNysc $s, string $status): array
+    {
+        return [
+            $s->matric_no ?? '',
+            $s->fname ?? '',
+            $s->mname ?? '',
+            $s->lname ?? '',
+            $s->phone ?? '',
+            $s->state ?? '',
+            $s->class_of_degree ?? '',
+            $s->dob ? (is_string($s->dob) ? $s->dob : $s->dob->format('Y-m-d')) : '',
+            $status,
+            $s->gender ?? '',
+            $s->marital_status ?? '',
+            $s->jamb_no ?? '',
+            '',
+            $s->study_mode ?? ''
+        ];
     }
 
     /**
@@ -1096,6 +1356,7 @@ class NyscUploadAnalysisController extends Controller
         $files = [
             'uploaded.xlsx' => storage_path('app/uploaded.xlsx'),
             'uploaded.xls' => storage_path('app/uploaded.xls'),
+            'uploaded_pcms.xlsx' => storage_path('app/uploaded_pcms.xlsx'),
             'all.pdf' => storage_path('app/all.pdf')
         ];
 

@@ -167,6 +167,7 @@ Route::prefix('nysc')->group(function () {
         // NYSC Upload Analysis routes
         Route::get('upload-analysis', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'analyzeUploads']);
         Route::get('upload-analysis/export-unuploaded', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'exportUnuploaded']);
+        Route::get('upload-analysis/export', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'exportUploadFiltered']);
         Route::get('upload-analysis/test-pdf', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'testPdfFile']);
         
         // Payment Verification routes

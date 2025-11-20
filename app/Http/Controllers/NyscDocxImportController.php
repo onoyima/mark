@@ -419,29 +419,91 @@ class NyscDocxImportController extends Controller
      *
      * @return JsonResponse
      */
-    public function getGraduandsMatches(): JsonResponse
+    public function getGraduandsMatches(Request $request): JsonResponse
     {
         try {
             Log::info('Starting GRADUANDS matching process');
             
-            $filePath = storage_path('app/GRADUANDS.docx');
-            
-            // Check if file exists
-            if (!file_exists($filePath)) {
+            $storageDir = storage_path('app');
+            $requestedFile = $request->query('file');
+            $availableFiles = [];
+            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
+                $availableFiles[] = [
+                    'name' => basename($f),
+                    'size' => $this->formatBytes(filesize($f)),
+                    'modified' => date('Y-m-d H:i:s', filemtime($f))
+                ];
+            }
+            usort($availableFiles, function($a, $b){ return strcmp($a['name'], $b['name']); });
+            $currentFileName = $requestedFile ?: 'GRADUANDS.docx';
+            $currentFilePath = file_exists($storageDir . '/' . $currentFileName) ? ($storageDir . '/' . $currentFileName) : null;
+            if (!$currentFilePath && !empty($availableFiles)) {
+                $currentFileName = $availableFiles[0]['name'];
+                $currentFilePath = $storageDir . '/' . $currentFileName;
+            }
+            if (!$currentFilePath) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'GRADUANDS.docx file not found. Please ensure the file exists in storage/app/GRADUANDS.docx'
-                ], 404);
+                    'summary' => [
+                        'total_students_with_null_degree' => 0,
+                        'total_extracted_from_docx' => 0,
+                        'total_matches_found' => 0,
+                        'exact_matches' => 0,
+                        'similar_matches' => 0,
+                        'total_unmatched' => 0,
+                        'current_file' => null,
+                        'available_files' => $availableFiles,
+                        'file_last_modified' => null
+                    ],
+                    'matches' => [],
+                    'unmatched' => [],
+                    'message' => 'No GRADUANDS*.docx file found in storage/app'
+                ]);
+            }
+
+            // Preflight: verify PhpWord is available to avoid runtime fatal errors
+            $phpWordAvailable = class_exists('PhpOffice\\PhpWord\\IOFactory');
+            if (!$phpWordAvailable) {
+                return response()->json([
+                    'success' => false,
+                    'summary' => [
+                        'total_students_with_null_degree' => 0,
+                        'total_extracted_from_docx' => 0,
+                        'total_matches_found' => 0,
+                        'exact_matches' => 0,
+                        'similar_matches' => 0,
+                        'total_unmatched' => 0,
+                        'current_file' => $currentFileName,
+                        'available_files' => $availableFiles,
+                        'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
+                    ],
+                    'matches' => [],
+                    'unmatched' => [],
+                    'message' => 'PhpWord library not available on server'
+                ]);
             }
 
             // Process the DOCX file to extract data
-            $result = $this->docxImportService->processDocxFile($filePath);
+            $result = $this->docxImportService->processDocxFile($currentFilePath);
             
             if (!$result['success']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed to process GRADUANDS.docx: ' . $result['error']
-                ], 500);
+                    'summary' => [
+                        'total_students_with_null_degree' => 0,
+                        'total_extracted_from_docx' => 0,
+                        'total_matches_found' => 0,
+                        'exact_matches' => 0,
+                        'similar_matches' => 0,
+                        'total_unmatched' => 0,
+                        'current_file' => $currentFileName,
+                        'available_files' => $availableFiles,
+                        'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
+                    ],
+                    'matches' => [],
+                    'unmatched' => [],
+                    'message' => 'Failed to process GRADUANDS file: ' . $result['error']
+                ]);
             }
 
             // Get ALL students for comprehensive matching
@@ -518,7 +580,7 @@ class NyscDocxImportController extends Controller
             $allMatches = array_merge($exactMatches, $similarMatches);
             
             // Count students with NULL class_of_degree for reference
-            $studentsWithNullDegree = $allStudents->where('class_of_degree', null)->count();
+            $studentsWithNullDegree = $allStudents->filter(function($s){ return $s->class_of_degree === null || $s->class_of_degree === ''; })->count();
 
             $summary = [
                 'total_students_with_null_degree' => $studentsWithNullDegree,
@@ -527,7 +589,9 @@ class NyscDocxImportController extends Controller
                 'exact_matches' => count($exactMatches),
                 'similar_matches' => count($similarMatches),
                 'total_unmatched' => count($unmatched),
-                'file_last_modified' => date('Y-m-d H:i:s', filemtime($filePath))
+                'current_file' => $currentFileName,
+                'available_files' => $availableFiles,
+                'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
             ];
 
             Log::info('GRADUANDS matching completed', [
@@ -546,17 +610,40 @@ class NyscDocxImportController extends Controller
                     ? "Found " . count($allMatches) . " matches (" . count($exactMatches) . " exact, " . count($similarMatches) . " similar)"
                     : "No matches found"
             ]);
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Error in GRADUANDS matching', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
+            // Attempt to provide context for frontend rendering
+            $storageDir = storage_path('app');
+            $availableFiles = [];
+            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
+                $availableFiles[] = [
+                    'name' => basename($f),
+                    'size' => $this->formatBytes(filesize($f)),
+                    'modified' => date('Y-m-d H:i:s', filemtime($f))
+                ];
+            }
+
             return response()->json([
                 'success' => false,
+                'summary' => [
+                    'total_students_with_null_degree' => 0,
+                    'total_extracted_from_docx' => 0,
+                    'total_matches_found' => 0,
+                    'exact_matches' => 0,
+                    'similar_matches' => 0,
+                    'total_unmatched' => 0,
+                    'current_file' => null,
+                    'available_files' => $availableFiles,
+                    'file_last_modified' => null
+                ],
+                'matches' => [],
+                'unmatched' => [],
                 'message' => 'Error processing GRADUANDS data: ' . $e->getMessage()
-            ], 500);
+            ]);
         }
     }
 
