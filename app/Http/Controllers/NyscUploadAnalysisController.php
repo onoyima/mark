@@ -860,11 +860,11 @@ class NyscUploadAnalysisController extends Controller
                 $rowNum = 2;
                 foreach ($rows as $row) {
                     foreach ($row as $idx => $val) {
-                        if ($idx === 6) { // class_of_degree column index
+                        if ($idx === 6) {
                             $val = preg_replace('/[\x00-\x1F\x7F]/u', '', (string)$val);
                         }
                         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
-                        if ($idx === 7) { // dob column index
+                        if ($idx === 7) {
                             $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
                         } else {
                             $sheet->setCellValueExplicit($col . $rowNum, (string)$val, DataType::TYPE_STRING);
