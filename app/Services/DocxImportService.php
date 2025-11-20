@@ -618,7 +618,7 @@ class DocxImportService
                             'matric_no' => $matricNo,
                             'student_name' => trim(($similarStudent->fname ?? '') . ' ' . ($similarStudent->mname ?? '') . ' ' . ($similarStudent->lname ?? '')),
                             'current_class_of_degree' => $similarStudent->class_of_degree,
-                            'proposed_class_of_degree' => null,
+                            'proposed_class_of_degree' => $data['class_of_degree'],
                             'match_confidence' => 'similar',
                             'source' => $data['source'],
                             'row_number' => $data['row_number'],
@@ -667,6 +667,15 @@ class DocxImportService
         $reviewData = [];
         
         foreach ($allData as $data) {
+            $dbVal = $data['current_class_of_degree'];
+            $propVal = $data['proposed_class_of_degree'];
+            $dbHas = $dbVal !== null && $dbVal !== '';
+            $propHas = $propVal !== null && $propVal !== '';
+            $normDb = $dbHas ? ($this->normalizeClassOfDegree($dbVal) ?? trim($dbVal)) : null;
+            $normProp = $propHas ? ($this->normalizeClassOfDegree($propVal) ?? trim($propVal)) : null;
+            $equal = (!$dbHas && !$propHas) || ($normDb !== null && $normProp !== null && strcasecmp($normDb, $normProp) === 0);
+            $needsUpdate = ($data['is_matched'] ?? false) && !$equal;
+
             $reviewData[] = [
                 'student_id' => $data['student_id'],
                 'matric_no' => $data['matric_no'],
@@ -676,7 +685,7 @@ class DocxImportService
                 'match_confidence' => $data['match_confidence'],
                 'is_matched' => $data['is_matched'] ?? false,
                 'match_type' => $data['match_type'] ?? 'unknown',
-                'needs_update' => ($data['is_matched'] ?? false) && ($data['current_class_of_degree'] !== $data['proposed_class_of_degree']),
+                'needs_update' => $needsUpdate,
                 'approved' => false,
                 'source' => $data['source'],
                 'row_number' => $data['row_number']
