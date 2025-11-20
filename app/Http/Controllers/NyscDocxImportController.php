@@ -528,13 +528,18 @@ class NyscDocxImportController extends Controller
                 // First try exact match
                 if (isset($studentLookup[$graduandsMatric])) {
                     $student = $studentLookup[$graduandsMatric];
+                    $dbDegree = $student->class_of_degree;
+                    $proposed = $extractedData['proposed_class_of_degree'] ?? null;
+                    $dbHas = ($dbDegree !== null && $dbDegree !== '');
+                    $propHas = ($proposed !== null && $proposed !== '');
+                    $needsUpdate = (!$dbHas && $propHas) || ($dbHas && !$propHas) || ($dbHas && $propHas && strcasecmp(trim($dbDegree), trim($proposed)) !== 0);
                     $exactMatches[] = [
                         'student_id' => $student->id,
                         'matric_no' => $student->matric_no,
                         'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
-                        'current_class_of_degree' => $student->class_of_degree,
-                        'proposed_class_of_degree' => $extractedData['proposed_class_of_degree'],
-                        'needs_update' => ($student->class_of_degree === null || $student->class_of_degree === '') || $student->class_of_degree !== $extractedData['proposed_class_of_degree'],
+                        'current_class_of_degree' => $dbDegree,
+                        'proposed_class_of_degree' => $proposed,
+                        'needs_update' => $needsUpdate,
                         'approved' => false,
                         'source' => $extractedData['source'] ?? 'docx',
                         'row_number' => $extractedData['row_number'] ?? null,
@@ -547,13 +552,18 @@ class NyscDocxImportController extends Controller
                     
                     if ($similarMatric) {
                         $student = $studentLookup[$similarMatric];
+                        $dbDegree = $student->class_of_degree;
+                        $proposed = $extractedData['proposed_class_of_degree'] ?? null;
+                        $dbHas = ($dbDegree !== null && $dbDegree !== '');
+                        $propHas = ($proposed !== null && $proposed !== '');
+                        $needsUpdate = (!$dbHas && $propHas) || ($dbHas && !$propHas) || ($dbHas && $propHas && strcasecmp(trim($dbDegree), trim($proposed)) !== 0);
                         $similarMatches[] = [
                             'student_id' => $student->id,
                             'matric_no' => $student->matric_no,
                             'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
-                            'current_class_of_degree' => $student->class_of_degree,
-                            'proposed_class_of_degree' => $extractedData['proposed_class_of_degree'],
-                            'needs_update' => ($student->class_of_degree === null || $student->class_of_degree === '') || $student->class_of_degree !== $extractedData['proposed_class_of_degree'],
+                            'current_class_of_degree' => $dbDegree,
+                            'proposed_class_of_degree' => $proposed,
+                            'needs_update' => $needsUpdate,
                             'approved' => false,
                             'source' => $extractedData['source'] ?? 'docx',
                             'row_number' => $extractedData['row_number'] ?? null,
