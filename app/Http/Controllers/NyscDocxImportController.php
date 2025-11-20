@@ -660,7 +660,7 @@ class NyscDocxImportController extends Controller
                 'updates' => 'required|array',
                 'updates.*.student_id' => 'required|integer',
                 'updates.*.matric_no' => 'required|string',
-                'updates.*.proposed_class_of_degree' => 'required|string',
+                'updates.*.proposed_class_of_degree' => 'nullable|string',
                 'updates.*.approved' => 'required|boolean'
             ]);
 
@@ -707,24 +707,24 @@ class NyscDocxImportController extends Controller
                             continue;
                         }
 
-                        // Only update if class_of_degree is NULL or empty
-                        if ($student->class_of_degree === null || $student->class_of_degree === '') {
-                            $student->class_of_degree = $update['proposed_class_of_degree'];
+                        $proposed = $update['proposed_class_of_degree'] ?? null;
+                        $current = $student->class_of_degree;
+                        if (($proposed ?? '') === ($current ?? '')) {
+                            $skippedCount++;
+                            Log::info('No change in class_of_degree', [
+                                'student_id' => $student->id,
+                                'matric_no' => $student->matric_no,
+                                'current_value' => $current
+                            ]);
+                        } else {
+                            $student->class_of_degree = $proposed;
                             $student->save();
                             $updatedCount++;
-                            
                             Log::info('Student class_of_degree updated', [
                                 'student_id' => $student->id,
                                 'matric_no' => $student->matric_no,
-                                'new_value' => $update['proposed_class_of_degree']
-                            ]);
-                        } else {
-                            $skippedCount++;
-                            Log::info('Student already has class_of_degree, skipping', [
-                                'student_id' => $student->id,
-                                'matric_no' => $student->matric_no,
-                                'existing_value' => $student->class_of_degree,
-                                'existing_value_length' => strlen($student->class_of_degree)
+                                'old_value' => $current,
+                                'new_value' => $proposed
                             ]);
                         }
 
@@ -1036,6 +1036,259 @@ class NyscDocxImportController extends Controller
     }
 
     /**
+     * Enforce class_of_degree ownership strictly from GRADUANDS.docx
+     * For every student_nysc row:
+     * - If there is NO exact tie in GRADUANDS, set class_of_degree = NULL
+     * - If there is an exact tie but DB value differs from GRADUANDS, set class_of_degree = NULL
+     * - Only exact ties keep their matching value; no updates are applied here, just nullification of incorrect values
+     */
+    public function enforceDegreesFromDocx(Request $request): JsonResponse
+    {
+        try {
+            $dryRun = filter_var($request->query('dry_run', 'false'), FILTER_VALIDATE_BOOLEAN);
+            $storageDir = storage_path('app');
+            $requestedFile = $request->query('file');
+            $availableFiles = [];
+            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
+                $availableFiles[] = [
+                    'name' => basename($f),
+                    'size' => $this->formatBytes(filesize($f)),
+                    'modified' => date('Y-m-d H:i:s', filemtime($f))
+                ];
+            }
+            usort($availableFiles, function($a, $b){ return strcmp($a['name'], $b['name']); });
+            $currentFileName = $requestedFile ?: 'GRADUANDS.docx';
+            $currentFilePath = file_exists($storageDir . '/' . $currentFileName) ? ($storageDir . '/' . $currentFileName) : null;
+            if (!$currentFilePath && !empty($availableFiles)) {
+                $currentFileName = $availableFiles[0]['name'];
+                $currentFilePath = $storageDir . '/' . $currentFileName;
+            }
+            if (!$currentFilePath) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No GRADUANDS*.docx file found in storage/app',
+                    'available_files' => $availableFiles
+                ]);
+            }
+
+            // Preflight library availability
+            if (!class_exists('PhpOffice\\PhpWord\\IOFactory')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'PhpWord library not available on server',
+                    'current_file' => $currentFileName,
+                    'available_files' => $availableFiles
+                ]);
+            }
+
+            $process = $this->docxImportService->processDocxFile($currentFilePath);
+            if (!($process['success'] ?? false)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process GRADUANDS file: ' . ($process['error'] ?? 'Unknown error')
+                ]);
+            }
+
+            $review = $process['review_data'] ?? [];
+
+            $students = StudentNysc::select(['id','matric_no','fname','mname','lname','class_of_degree'])->get();
+            $studentLookup = [];
+            foreach ($students as $s) {
+                $studentLookup[strtoupper(trim(preg_replace('/\s+/', '', (string)$s->matric_no)))] = $s;
+            }
+
+            $tieMap = [];
+            $presence = [];
+            $dbKeys = array_keys($studentLookup);
+            foreach ($review as $rec) {
+                $degree = $rec['proposed_class_of_degree'] ?? null;
+                $matric = $rec['matric_no'] ?? null;
+                if (!$matric) { continue; }
+                $docxKey = strtoupper(trim(preg_replace('/\s+/', '', (string)$matric)));
+                if (isset($studentLookup[$docxKey])) {
+                    $presence[$docxKey] = true;
+                    if ($degree !== null && $degree !== '') { $tieMap[$docxKey] = $degree; }
+                    continue;
+                }
+                $docxFinal = null; $docxDept = null;
+                if (preg_match('/(\d+)$/', $docxKey, $m1)) { $docxFinal = $m1[1]; }
+                if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $docxKey, $m2)) { $docxDept = strtoupper($m2[1]); }
+                if ($docxFinal === null) { continue; }
+                foreach ($dbKeys as $candKey) {
+                    if (!preg_match('/(\d+)$/', $candKey, $cm1)) { continue; }
+                    $candFinal = $cm1[1];
+                    if ($candFinal !== $docxFinal) { continue; }
+                    $candDept = null;
+                    if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $candKey, $cm2)) { $candDept = strtoupper($cm2[1]); }
+                    
+                    $presence[$candKey] = true;
+                    if ($degree !== null && $degree !== '') { $tieMap[$candKey] = $degree; }
+                }
+            }
+
+            $scanned = 0; $nullified_not_in_docx = 0; $nullified_present_no_degree = 0; $updated_to_docx = 0; $kept_ok = 0; $already_null = 0;
+
+            $listNotInDocx = [];
+            $listPresentNoDegree = [];
+            $listUpdated = [];
+            $operations = $request->input('operations');
+            if (is_array($operations) && !empty($operations) && !$dryRun) {
+                \DB::beginTransaction();
+                try {
+                    foreach ($operations as $op) {
+                        $scanned++;
+                        $sid = $op['student_id'] ?? null;
+                        $mat = strtoupper(trim(preg_replace('/\s+/', '', (string)($op['matric_no'] ?? ''))));
+                        $action = $op['action'] ?? null;
+                        $value = $op['value'] ?? null;
+                        $student = $sid ? StudentNysc::find($sid) : null;
+                        if (!$student) { continue; }
+                        if ($action === 'nullify') {
+                            $student->class_of_degree = null;
+                            $student->save();
+                            $nullified_not_in_docx++;
+                        } elseif ($action === 'update') {
+                            $target = $value ?? ($tieMap[$mat] ?? null);
+                            if ($target === null) { continue; }
+                            $student->class_of_degree = $target;
+                            $student->save();
+                            $updated_to_docx++;
+                        }
+                    }
+                    \DB::commit();
+                } catch (\Throwable $t) {
+                    \DB::rollBack();
+                    throw $t;
+                }
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Selected operations applied',
+                    'stats' => [
+                        'scanned' => $scanned,
+                        'kept_ok' => $kept_ok,
+                        'nullified_not_in_docx' => $nullified_not_in_docx,
+                        'updated_to_docx' => $updated_to_docx,
+                        'already_null' => $already_null,
+                    ],
+                    'current_file' => $currentFileName,
+                    'available_files' => $availableFiles,
+                    'dry_run' => false,
+                ]);
+            }
+            if ($dryRun) {
+                foreach ($students as $s) {
+                    $scanned++;
+                    $key = strtoupper(trim(preg_replace('/\s+/', '', (string)$s->matric_no)));
+                    $docxDegree = $tieMap[$key] ?? null;
+                    $isPresent = isset($presence[$key]);
+                    $dbDegree = $s->class_of_degree;
+                    $dbHasValue = ($dbDegree !== null && $dbDegree !== '');
+
+                    if ($docxDegree === null) {
+                        if ($dbHasValue) { 
+                            if ($isPresent) {
+                                $nullified_present_no_degree++;
+                                $listPresentNoDegree[] = [
+                                    'student_id' => $s->id,
+                                    'matric_no' => $s->matric_no,
+                                    'name' => trim(($s->fname ?? '') . ' ' . ($s->mname ?? '') . ' ' . ($s->lname ?? '')),
+                                    'current_class_of_degree' => $dbDegree,
+                                    'docx_class_of_degree' => null,
+                                    'reason' => 'present_no_degree'
+                                ];
+                            } else {
+                                $nullified_not_in_docx++; 
+                                $listNotInDocx[] = [
+                                    'student_id' => $s->id,
+                                    'matric_no' => $s->matric_no,
+                                    'name' => trim(($s->fname ?? '') . ' ' . ($s->mname ?? '') . ' ' . ($s->lname ?? '')),
+                                    'current_class_of_degree' => $dbDegree,
+                                    'docx_class_of_degree' => null,
+                                    'reason' => 'not_in_docx'
+                                ];
+                            }
+                        } else { $already_null++; }
+                    } else {
+                        if ($dbHasValue && strcasecmp(trim($dbDegree), trim($docxDegree)) === 0) { $kept_ok++; }
+                        else { 
+                            $updated_to_docx++; 
+                            $listUpdated[] = [
+                                'student_id' => $s->id,
+                                'matric_no' => $s->matric_no,
+                                'name' => trim(($s->fname ?? '') . ' ' . ($s->mname ?? '') . ' ' . ($s->lname ?? '')),
+                                'current_class_of_degree' => $dbDegree,
+                                'docx_class_of_degree' => $docxDegree,
+                                'reason' => 'update_to_docx'
+                            ];
+                        }
+                    }
+                }
+            } else {
+                \DB::beginTransaction();
+                try {
+                    foreach ($students as $s) {
+                        $scanned++;
+                        $key = strtoupper(trim(preg_replace('/\s+/', '', (string)$s->matric_no)));
+                        $docxDegree = $tieMap[$key] ?? null;
+                        $isPresent = isset($presence[$key]);
+                        $dbDegree = $s->class_of_degree;
+                        $dbHasValue = ($dbDegree !== null && $dbDegree !== '');
+
+                        if ($docxDegree === null) {
+                            if ($dbHasValue) {
+                                $s->class_of_degree = null;
+                                $s->save();
+                                if ($isPresent) { $nullified_present_no_degree++; } else { $nullified_not_in_docx++; }
+                            } else { $already_null++; }
+                        } else {
+                            if ($dbHasValue && strcasecmp(trim($dbDegree), trim($docxDegree)) === 0) { $kept_ok++; }
+                            else {
+                                $s->class_of_degree = $docxDegree;
+                                $s->save();
+                                $updated_to_docx++;
+                            }
+                        }
+                    }
+                    \DB::commit();
+                } catch (\Throwable $t) {
+                    \DB::rollBack();
+                    throw $t;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Enforcement completed',
+                'stats' => [
+                    'scanned' => $scanned,
+                    'kept_ok' => $kept_ok,
+                    'nullified_not_in_docx' => $nullified_not_in_docx,
+                    'nullified_present_no_degree' => $nullified_present_no_degree,
+                    'updated_to_docx' => $updated_to_docx,
+                    'already_null' => $already_null,
+                ],
+                'current_file' => $currentFileName,
+                'available_files' => $availableFiles,
+                'dry_run' => $dryRun,
+                'details' => [
+                    'not_in_docx' => $listNotInDocx,
+                    'present_no_degree' => $listPresentNoDegree,
+                    'updated_to_docx' => $listUpdated
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error enforcing degrees from GRADUANDS', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error enforcing degrees: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Format bytes to human readable format
      */
     private function formatBytes($size, $precision = 2)
@@ -1212,21 +1465,14 @@ class NyscDocxImportController extends Controller
      */
     private function findSimilarMatricNumber(string $target, array $candidates): ?string
     {
-        // Extract the final number from target (e.g., 7194 from VUG/PHL/22/7194)
-        if (!preg_match('/\/(\d+)$/', $target, $targetMatches)) {
+        if (!preg_match('/(\d+)$/', $target, $targetMatches)) {
             return null; // No final number found
         }
         $targetFinalNumber = $targetMatches[1];
         
-        // Extract department from target (e.g., PHL from VUG/PHL/22/7194)
-        $targetDepartment = null;
-        if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $target, $deptMatches)) {
-            $targetDepartment = strtoupper($deptMatches[1]);
-        }
-        
         foreach ($candidates as $candidate) {
             // Extract the final number from candidate
-            if (!preg_match('/\/(\d+)$/', $candidate, $candidateMatches)) {
+            if (!preg_match('/(\d+)$/', $candidate, $candidateMatches)) {
                 continue; // Skip if no final number found
             }
             $candidateFinalNumber = $candidateMatches[1];
@@ -1235,22 +1481,7 @@ class NyscDocxImportController extends Controller
             if ($targetFinalNumber !== $candidateFinalNumber) {
                 continue;
             }
-            
-            // Extract department from candidate
-            $candidateDepartment = null;
-            if (preg_match('/\/([A-Za-z]+)\/\d+\/\d+$/', $candidate, $candDeptMatches)) {
-                $candidateDepartment = strtoupper($candDeptMatches[1]);
-            }
-            
-            // If we have departments for both, they should match (case-insensitive)
-            if ($targetDepartment && $candidateDepartment) {
-                if ($targetDepartment === $candidateDepartment) {
-                    return $candidate; // Found match: same final number and department
-                }
-            } else {
-                // If we can't extract departments, just match on final number
-                return $candidate;
-            }
+            return $candidate;
         }
         
         return null;

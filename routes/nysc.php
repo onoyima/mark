@@ -156,6 +156,7 @@ Route::prefix('nysc')->group(function () {
         })->withoutMiddleware(['auth:sanctum']);
         Route::get('docx-import/graduands-matches', [NyscDocxImportController::class, 'getGraduandsMatches']);
         Route::post('docx-import/graduands-apply', [NyscDocxImportController::class, 'applyGraduandsUpdates']);
+        Route::post('docx-import/enforce-degrees', [NyscDocxImportController::class, 'enforceDegreesFromDocx']);
         Route::get('docx-import/data-analysis', [NyscDocxImportController::class, 'getDataAnalysis']);
         Route::post('docx-import/test-db-update', [NyscAdminController::class, 'testDatabaseUpdate']);
         
