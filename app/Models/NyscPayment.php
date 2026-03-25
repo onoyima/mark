@@ -14,6 +14,7 @@ class NyscPayment extends Model
     protected $fillable = [
         'student_id',
         'student_nysc_id',
+        'nysc_session_id',
         'session_id',
         'amount',
         'payment_reference',
@@ -45,6 +46,14 @@ class NyscPayment extends Model
     public function studentNysc()
     {
         return $this->belongsTo(StudentNysc::class, 'student_nysc_id');
+    }
+    
+    /**
+     * Get the NYSC session this payment belongs to.
+     */
+    public function nyscSession()
+    {
+        return $this->belongsTo(NyscSession::class, 'nysc_session_id');
     }
     
     /**

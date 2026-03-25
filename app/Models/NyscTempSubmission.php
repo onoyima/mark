@@ -14,6 +14,7 @@ class NyscTempSubmission extends Model
 
     protected $fillable = [
         'student_id',
+        'nysc_session_id',
         'session_id',
         // Personal Information
         'fname',
@@ -55,6 +56,14 @@ class NyscTempSubmission extends Model
     public function student()
     {
         return $this->belongsTo(Student::class, 'student_id');
+    }
+
+    /**
+     * Relationship with NyscSession model
+     */
+    public function nyscSession()
+    {
+        return $this->belongsTo(NyscSession::class, 'nysc_session_id');
     }
 
     /**

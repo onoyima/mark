@@ -10,10 +10,12 @@ use App\Models\Department;
 use App\Models\State;
 use App\Models\StudyMode;
 use App\Models\StudentNysc;
+use App\Models\NyscSession;
 use App\Models\NyscPayment;
 use App\Models\NyscTempSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class NyscStudentController extends Controller
@@ -285,10 +287,19 @@ class NyscStudentController extends Controller
         // Generate unique session ID for this submission
         $sessionId = NyscTempSubmission::generateSessionId();
 
+        $activeSession = NyscSession::activeSession();
+        if (!$activeSession) {
+            return response()->json([
+                'success' => false,
+                'message' => 'NYSC Registration is currently closed. No active session found.'
+            ], 403);
+        }
+
         // Prepare data for temporary storage
         $tempData = array_diff_key($validated, ['payment_amount' => '']);
         $tempData['student_id'] = $student->id;
         $tempData['session_id'] = $sessionId;
+        $tempData['nysc_session_id'] = $activeSession->id;
         $tempData['status'] = 'pending';
 
         // Delete any existing pending submissions for this student
@@ -347,9 +358,12 @@ class NyscStudentController extends Controller
         try {
             DB::beginTransaction();
 
+            $activeSession = NyscSession::activeSession();
+
             // Create payment record
             $payment = NyscPayment::create([
                 'student_nysc_id' => $validated['student_nysc_id'],
+                'nysc_session_id' => $activeSession ? $activeSession->id : null,
                 'amount' => $validated['amount'],
                 'payment_reference' => $validated['payment_reference'],
                 'status' => 'successful', // Assuming payment verification is done externally
@@ -361,7 +375,8 @@ class NyscStudentController extends Controller
 
             // Mark NYSC record as submitted since payment is successful
             $nysc->update([
-                'is_submitted' => true
+                'is_submitted' => true,
+                'nysc_session_id' => $activeSession ? $activeSession->id : null
             ]);
 
             DB::commit();

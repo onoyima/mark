@@ -61,6 +61,11 @@ Route::prefix('nysc')->group(function () {
         Route::post('control', [NyscAdminController::class, 'control']);
         Route::get('control', [NyscAdminController::class, 'getControl']);
         
+        // Admin Session Management
+        Route::get('sessions', [NyscAdminController::class, 'getSessions']);
+        Route::post('sessions', [NyscAdminController::class, 'createSession']);
+        Route::put('sessions/{id}/activate', [NyscAdminController::class, 'activateSession']);
+
         // Admin Settings Management
         Route::get('settings', [NyscAdminController::class, 'getSettings']);
         Route::put('settings', [NyscAdminController::class, 'updateSettings']);

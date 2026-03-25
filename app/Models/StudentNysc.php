@@ -13,6 +13,7 @@ class StudentNysc extends Model
 
     protected $fillable = [
         'student_id',
+        'nysc_session_id',
         'is_paid',
         'is_submitted',
         'submitted_at',
@@ -51,6 +52,14 @@ class StudentNysc extends Model
     public function student()
     {
         return $this->belongsTo(Student::class, 'student_id');
+    }
+
+    /**
+     * Get the NYSC session this record belongs to.
+     */
+    public function session()
+    {
+        return $this->belongsTo(NyscSession::class, 'nysc_session_id');
     }
 
     /**

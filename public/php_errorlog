@@ -1,0 +1,115 @@
+[31-Aug-2025 08:40:06 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:15 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:16 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:18 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:19 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:20 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:23 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:24 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:25 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:40:26 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:51:04 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:53:51 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:57:12 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:57:59 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:58:51 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:58:55 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:59:01 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 08:59:19 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 09:19:09 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 09:19:22 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 09:19:25 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 09:34:15 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 14
+[31-Aug-2025 09:39:06 UTC] PHP Warning:  require(/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 17
+[31-Aug-2025 09:39:06 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/customer/www/academy.veritas.edu.ng/public_html/public/../vendor/autoload.php' (include_path='.:/usr/local/php82/pear') in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php:17
+Stack trace:
+#0 {main}
+  thrown in /home/customer/www/academy.veritas.edu.ng/public_html/public/index.php on line 17
+[22-Sep-2025 02:59:31 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 40960 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:02:13 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 24576 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:08:16 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:08:22 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 49152 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:08:26 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 49152 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:08:28 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 49152 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:09:36 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 32768 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:10:33 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 49152 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:16:59 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 32768 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:17:39 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:18:33 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 49152 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:22:35 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:22:41 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 03:38:40 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:23:24 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:23:26 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:23:27 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:36:13 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:36:20 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:45:18 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 69632 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:45:48 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413
+[22-Sep-2025 04:51:44 UTC] PHP Fatal error:  Allowed memory size of 805306368 bytes exhausted (tried to allocate 28672 bytes) in /home/customer/www/academy.veritas.edu.ng/public_html/vendor/laravel/framework/src/Illuminate/Database/Connection.php on line 413

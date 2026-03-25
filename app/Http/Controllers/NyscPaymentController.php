@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\StudentNysc;
 use App\Models\NyscPayment;
+use App\Models\NyscSession;
 use App\Models\NyscTempSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -92,6 +93,7 @@ class NyscPaymentController extends Controller
                 NyscPayment::create([
                     'student_id' => $student->id,
                     'student_nysc_id' => null, // Will be set after successful payment
+                    'nysc_session_id' => $tempSubmission->nysc_session_id,
                     'payment_reference' => $reference,
                     'amount' => $amount,
                     'status' => 'pending',
@@ -305,6 +307,7 @@ class NyscPaymentController extends Controller
                         array_merge($nyscData, [
                             'is_paid' => true,
                             'is_submitted' => true,
+                            'nysc_session_id' => $payment->nysc_session_id,
                         ])
                     );
 
@@ -427,6 +430,7 @@ class NyscPaymentController extends Controller
                             array_merge($nyscData, [
                                 'is_paid' => true,
                                 'is_submitted' => true,
+                                'nysc_session_id' => $payment->nysc_session_id,
                             ])
                         );
 
