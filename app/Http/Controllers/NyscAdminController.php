@@ -30,19 +30,28 @@ class NyscAdminController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function dashboard(): \Illuminate\Http\JsonResponse
+    public function dashboard(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
-            // Use database aggregation for better performance
-            $totalStudents = StudentNysc::where('is_submitted', true)->count();
-            $totalPaid = StudentNysc::where('is_submitted', true)->where('is_paid', true)->count();
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            
+            $totalStudentsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $totalStudentsQuery->where('nysc_session_id', $sessionId); }
+            $totalStudents = $totalStudentsQuery->count();
+            $totalPaidQuery = StudentNysc::where('is_submitted', true)->where('is_paid', true);
+            if ($sessionId) { $totalPaidQuery->where('nysc_session_id', $sessionId); }
+            $totalPaid = $totalPaidQuery->count();
             $totalUnpaid = $totalStudents - $totalPaid;
 
             // Get temp submissions count
-            $tempSubmissions = \App\Models\NyscTempSubmission::where('status', 'pending')->count();
+            $tempSubmissionsQuery = \App\Models\NyscTempSubmission::where('status', 'pending');
+            if ($sessionId) { $tempSubmissionsQuery->where('nysc_session_id', $sessionId); }
+            $tempSubmissions = $tempSubmissionsQuery->count();
 
             // Department breakdown using database aggregation
-            $departmentStats = StudentNysc::where('is_submitted', true)
+            $departmentStatsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $departmentStatsQuery->where('nysc_session_id', $sessionId); }
+            $departmentStats = $departmentStatsQuery
                 ->selectRaw('department, COUNT(*) as count')
                 ->groupBy('department')
                 ->get()
@@ -55,7 +64,9 @@ class NyscAdminController extends Controller
                 });
 
             // Gender breakdown using database aggregation
-            $genderStats = StudentNysc::where('is_submitted', true)
+            $genderStatsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $genderStatsQuery->where('nysc_session_id', $sessionId); }
+            $genderStats = $genderStatsQuery
                 ->selectRaw('gender, COUNT(*) as count')
                 ->groupBy('gender')
                 ->get()
@@ -68,7 +79,9 @@ class NyscAdminController extends Controller
                 });
 
             // Payment analytics using database aggregation
-            $paymentStats = \App\Models\NyscPayment::where('status', 'successful')
+            $paymentStatsQuery = \App\Models\NyscPayment::where('status', 'successful');
+            if ($sessionId) { $paymentStatsQuery->where('nysc_session_id', $sessionId); }
+            $paymentStats = $paymentStatsQuery
                 ->selectRaw('COUNT(*) as total_payments, SUM(amount) as total_revenue, AVG(amount) as average_amount')
                 ->first();
 
@@ -83,7 +96,9 @@ class NyscAdminController extends Controller
                 $monthStart = $date->startOfMonth()->format('Y-m-d H:i:s');
                 $monthEnd = $date->endOfMonth()->format('Y-m-d H:i:s');
 
-                $monthStats = \App\Models\NyscPayment::where('status', 'successful')
+                $monthStatsQuery = \App\Models\NyscPayment::where('status', 'successful');
+                if ($sessionId) { $monthStatsQuery->where('nysc_session_id', $sessionId); }
+                $monthStats = $monthStatsQuery
                     ->whereBetween('payment_date', [$monthStart, $monthEnd])
                     ->selectRaw('COUNT(*) as count, SUM(amount) as revenue')
                     ->first();
@@ -96,7 +111,9 @@ class NyscAdminController extends Controller
             }
 
             // Recent registrations (last 10) using efficient query
-            $recentRegistrations = StudentNysc::where('is_submitted', true)
+            $recentRegistrationsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $recentRegistrationsQuery->where('nysc_session_id', $sessionId); }
+            $recentRegistrations = $recentRegistrationsQuery
                 ->with('student:id,fname,lname')
                 ->select('id', 'student_id', 'fname', 'lname', 'matric_no', 'department', 'is_paid', 'created_at')
                 ->orderBy('created_at', 'desc')
@@ -157,9 +174,9 @@ class NyscAdminController extends Controller
      * Control the update window
      *
      * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\Response
+     * @return \Illuminate\Http\JsonResponse
      */
-    public function control(Request $request)
+    public function control(Request $request): \Illuminate\Http\JsonResponse
     {
         $request->validate([
             'open' => 'required|boolean',
@@ -221,7 +238,12 @@ class NyscAdminController extends Controller
             'is_paid' => 'sometimes|boolean',
             'payment_amount' => 'sometimes|integer',
         ]);
-
+        $sessionId = $request->input('session_id');
+        if (!$sessionId) {
+            $activeSessionId = AdminSetting::get('active_session_id');
+            if ($activeSessionId) { $sessionId = $activeSessionId; }
+        }
+        if ($sessionId) { $validated['nysc_session_id'] = $sessionId; }
         // Update the record
         $nysc->update($validated);
 
@@ -237,12 +259,15 @@ class NyscAdminController extends Controller
      * @param  string  $format
      * @return \Illuminate\Http\Response
      */
-    public function export($format)
+    public function export(Request $request, $format)
     {
         try {
             Log::info("Export request received for format: {$format}");
 
-            $students = StudentNysc::where('is_submitted', true)
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $studentsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $studentsQuery->where('nysc_session_id', $sessionId); }
+            $students = $studentsQuery
                 ->with(['payments' => function($query) {
                     $query->where('status', 'successful')->orderBy('payment_date', 'desc');
                 }])
@@ -298,6 +323,14 @@ class NyscAdminController extends Controller
             $page = $request->input('page', 1);
 
             $query = NyscPayment::with(['studentNysc.student']);
+
+            // Session filtering: if a session_id is provided, or default to active session
+            $sessionId = $request->input('session_id');
+            if (!$sessionId) {
+                $activeSessionId = AdminSetting::get('active_session_id');
+                if ($activeSessionId) { $sessionId = $activeSessionId; }
+            }
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
 
             // Apply filters if provided
             if ($request->has('status')) {
@@ -370,7 +403,9 @@ class NyscAdminController extends Controller
             }
 
             // Calculate statistics from actual payment records
-            $allPayments = \App\Models\NyscPayment::where('status', 'successful')->get();
+            $allPaymentsQuery = \App\Models\NyscPayment::where('status', 'successful');
+            if ($sessionId) { $allPaymentsQuery->where('nysc_session_id', $sessionId); }
+            $allPayments = $allPaymentsQuery->get();
             $totalAmount = $allPayments->sum('amount');
 
             // Get payment amounts from admin settings for accurate counting
@@ -601,6 +636,8 @@ class NyscAdminController extends Controller
     {
         $isOpen = AdminSetting::get('system_open');
         $deadline = AdminSetting::get('payment_deadline');
+        $activeSessionId = AdminSetting::get('active_session_id');
+        $activeSessionName = AdminSetting::get('active_session_name');
         $paymentAmount = AdminSetting::get('payment_amount');
         $latePaymentFee = AdminSetting::get('late_payment_fee');
         $countdownTitle = AdminSetting::get('countdown_title');
@@ -615,6 +652,8 @@ class NyscAdminController extends Controller
             'late_payment_fee' => $latePaymentFee,
             'countdown_title' => $countdownTitle,
             'countdown_message' => $countdownMessage,
+            'active_session_id' => $activeSessionId,
+            'active_session_name' => $activeSessionName,
         ];
     }
 
@@ -809,6 +848,13 @@ class NyscAdminController extends Controller
     {
         $query = StudentNysc::where('is_submitted', true)->with('student');
 
+        $sessionId = $request->input('session_id');
+        if (!$sessionId) {
+            $activeSessionId = AdminSetting::get('active_session_id');
+            if ($activeSessionId) { $sessionId = $activeSessionId; }
+        }
+        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
         // Apply search filter
         if ($request->has('search') && $request->search) {
             $search = $request->search;
@@ -847,6 +893,13 @@ class NyscAdminController extends Controller
     {
         try {
             $query = StudentNysc::whereNotNull('class_of_degree');
+
+            $sessionId = $request->input('session_id');
+            if (!$sessionId) {
+                $activeSessionId = AdminSetting::get('active_session_id');
+                if ($activeSessionId) { $sessionId = $activeSessionId; }
+            }
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
 
             // Apply course_study filter
             if ($request->has('course_study') && $request->course_study !== 'all') {
@@ -907,6 +960,13 @@ class NyscAdminController extends Controller
     {
         try {
             $query = StudentNysc::whereNotNull('class_of_degree');
+
+            $sessionId = $request->input('session_id');
+            if (!$sessionId) {
+                $activeSessionId = AdminSetting::get('active_session_id');
+                if ($activeSessionId) { $sessionId = $activeSessionId; }
+            }
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
 
             // Apply course_study filter
             if ($request->has('course_study') && $request->course_study !== 'all') {
@@ -1306,12 +1366,19 @@ class NyscAdminController extends Controller
                         }
 
                         // Prepare data for student_nysc table
+                        $sessionId = $request->input('session_id');
+                        if (!$sessionId) {
+                            $activeSessionId = AdminSetting::get('active_session_id');
+                            if ($activeSessionId) { $sessionId = $activeSessionId; }
+                        }
+
                         $nyscData = array_merge($studentData, [
                             'student_id' => $existingStudent->id,
                             'is_submitted' => true,
                             'is_paid' => false,
                             'payment_amount' => null,
                             'submission_date' => now(),
+                            'nysc_session_id' => $sessionId,
                         ]);
 
                         // Check if NYSC record already exists
@@ -1472,12 +1539,15 @@ class NyscAdminController extends Controller
     public function getAllStudents(): \Illuminate\Http\JsonResponse
     {
         try {
-            $students = StudentNysc::with(['student', 'payments' => function($query) {
+            $query = StudentNysc::with(['student', 'payments' => function($query) {
                 $query->where('status', 'successful');
             }])
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($nysc) {
+            ->orderBy('created_at', 'desc');
+
+            $sessionId = request()->input('session_id') ?: AdminSetting::get('active_session_id');
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
+            $students = $query->get()->map(function ($nysc) {
                 return [
                     'id' => $nysc->id,
                     'student_id' => $nysc->student_id,
@@ -1524,11 +1594,17 @@ class NyscAdminController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getStudentStats(): \Illuminate\Http\JsonResponse
+    public function getStudentStats(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
-            $totalStudents = StudentNysc::where('is_submitted', true)->count();
-            $paidStudents = StudentNysc::where('is_submitted', true)->where('is_paid', true)->count();
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            
+            $totalStudentsQuery = StudentNysc::where('is_submitted', true);
+            if ($sessionId) { $totalStudentsQuery->where('nysc_session_id', $sessionId); }
+            $totalStudents = $totalStudentsQuery->count();
+            $paidStudentsQuery = StudentNysc::where('is_submitted', true)->where('is_paid', true);
+            if ($sessionId) { $paidStudentsQuery->where('nysc_session_id', $sessionId); }
+            $paidStudents = $paidStudentsQuery->count();
             $pendingPayments = $totalStudents - $paidStudents;
 
             return response()->json([
@@ -1635,9 +1711,17 @@ class NyscAdminController extends Controller
             $limit = $request->get('limit', 10);
 
             // Get temporary submissions with student information
-            $submissions = \App\Models\NyscTempSubmission::with(['student'])
-                ->orderBy('created_at', 'desc')
-                ->paginate($limit, ['*'], 'page', $page);
+            $query = \App\Models\NyscTempSubmission::with(['student'])
+                ->orderBy('created_at', 'desc');
+
+            $sessionId = $request->input('session_id');
+            if (!$sessionId) {
+                $activeSessionId = AdminSetting::get('active_session_id');
+                if ($activeSessionId) { $sessionId = $activeSessionId; }
+            }
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
+            $submissions = $query->paginate($limit, ['*'], 'page', $page);
 
             $formattedSubmissions = $submissions->map(function($submission) {
                 $student = $submission->student;
@@ -1950,6 +2034,13 @@ class NyscAdminController extends Controller
     {
         $query = StudentNysc::with(['student', 'payments']);
 
+        $sessionId = $filters['session_id'] ?? null;
+        if (!$sessionId) {
+            $activeSessionId = AdminSetting::get('active_session_id');
+            if ($activeSessionId) { $sessionId = $activeSessionId; }
+        }
+        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
         // Apply filters
         if (!empty($filters['department'])) {
             $query->where('department', $filters['department']);
@@ -2016,6 +2107,13 @@ class NyscAdminController extends Controller
     {
         $query = NyscPayment::with(['studentNysc.student']);
 
+        $sessionId = $filters['session_id'] ?? null;
+        if (!$sessionId) {
+            $activeSessionId = AdminSetting::get('active_session_id');
+            if ($activeSessionId) { $sessionId = $activeSessionId; }
+        }
+        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
         // Apply filters
         if (!empty($filters['department'])) {
             $query->whereHas('studentNysc', function($q) use ($filters) {
@@ -2061,6 +2159,13 @@ class NyscAdminController extends Controller
     private function getSubmissionsExportData(array $filters): array
     {
         $query = NyscTempSubmission::with(['student']);
+
+        $sessionId = $filters['session_id'] ?? null;
+        if (!$sessionId) {
+            $activeSessionId = AdminSetting::get('active_session_id');
+            if ($activeSessionId) { $sessionId = $activeSessionId; }
+        }
+        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
 
         // Apply filters
         if (!empty($filters['department'])) {
@@ -2850,11 +2955,11 @@ class NyscAdminController extends Controller
     /**
      * Get dashboard data with dynamic settings
      */
-    public function getDashboardWithSettings()
+    public function getDashboardWithSettings(Request $request)
     {
         try {
             // Get regular dashboard data
-            $dashboardData = $this->dashboard()->getData(true);
+            $dashboardData = $this->dashboard($request)->getData(true);
 
             // Get admin settings
             $settings = AdminSetting::getByCategory('payment') +

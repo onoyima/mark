@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\AdminSetting;
 
 class StudentNysc extends Model
 {
@@ -102,5 +103,14 @@ class StudentNysc extends Model
     public function hasSuccessfulPayment()
     {
         return $this->payments()->where('status', 'successful')->exists();
+    }
+
+    protected static function booted()
+    {
+        static::creating(function (StudentNysc $model) {
+            if (empty($model->nysc_session_id)) {
+                $model->nysc_session_id = AdminSetting::get('active_session_id') ?: 1;
+            }
+        });
     }
 }

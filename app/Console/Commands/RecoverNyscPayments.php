@@ -65,7 +65,7 @@ class RecoverNyscPayments extends Command
             $this->info("Student ID: {$payment->student_id}");
             $this->info("Amount: {$payment->amount}");
             $this->info("Reference: {$payment->payment_reference}");
-            $this->info("Session ID: {$payment->session_id}");
+            $this->info("Submission Token: {$payment->submission_token}");
             
             try {
                 // Try to recover data from multiple sources
@@ -147,8 +147,8 @@ class RecoverNyscPayments extends Command
         $studentId = $payment->student_id;
         
         // First, try to find a matching temp submission (even if expired)
-        if ($payment->session_id) {
-            $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)->first();
+        if ($payment->submission_token) {
+            $tempSubmission = NyscTempSubmission::where('submission_token', $payment->submission_token)->first();
             if ($tempSubmission) {
                 $this->info("Found matching temp submission (status: {$tempSubmission->status})");
                 return $tempSubmission->toStudentNyscData();

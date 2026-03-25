@@ -11,6 +11,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use App\Models\AdminSetting;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
 use PhpOffice\PhpSpreadsheet\Cell\StringValueBinder;
 
@@ -192,7 +193,8 @@ class NyscUploadAnalysisController extends Controller
             $combinedExtractionResult = $this->combineExtractionResults($allExtractionResults);
             
             // Get NYSC database data
-            $nyscData = $this->getNyscDatabaseData();
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $nyscData = $this->getNyscDatabaseData($sessionId);
             
             // Perform cross-reference analysis
             $comparisonSet = ($analysisMode === 'matric_no') ? $nyscData['matric_numbers'] : $nyscData['student_ids'];
@@ -496,10 +498,15 @@ class NyscUploadAnalysisController extends Controller
     /**
      * Get NYSC database data
      */
-    private function getNyscDatabaseData(): array
+    private function getNyscDatabaseData($sessionId = null): array
     {
-        $records = StudentNysc::select('student_id', 'matric_no', 'fname', 'lname', 'course_study')
-            ->get();
+        $query = StudentNysc::select('student_id', 'matric_no', 'fname', 'lname', 'course_study');
+        
+        if ($sessionId) {
+            $query->where('nysc_session_id', $sessionId);
+        }
+        
+        $records = $query->get();
         
         $studentIds = $records->pluck('student_id')->toArray();
         $matricNumbers = $records->pluck('matric_no')->filter()->map(function($m){ return trim((string)$m); })->toArray();
@@ -783,12 +790,18 @@ class NyscUploadAnalysisController extends Controller
                     $ids = array_values(array_unique(array_map(function($r){ return (int)($r['student_id'] ?? 0); }, $matchedRecords)));
                     $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
                     if (!empty($ids)) {
-                        foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
+                        $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+                        $query = StudentNysc::whereIn('student_id', $ids);
+                        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+                        foreach ($query->get() as $s) {
                             $rows[] = $this->mapStudentToExportRow($s);
                         }
                     }
                 } else {
-                    $students = StudentNysc::whereIn('student_id', $uploadedSet)->get();
+                    $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+                    $query = StudentNysc::whereIn('student_id', $uploadedSet);
+                    if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+                    $students = $query->get();
                     foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s); }
                 }
             } elseif ($filter === 'not_uploaded') {
@@ -797,16 +810,23 @@ class NyscUploadAnalysisController extends Controller
                     $ids = array_values(array_unique(array_map(function($r){ return (int)($r['student_id'] ?? 0); }, $unuploadedRecords)));
                     $ids = array_values(array_filter($ids, function($v){ return $v > 0; }));
                     if (!empty($ids)) {
-                        foreach (StudentNysc::whereIn('student_id', $ids)->get() as $s) {
+                        $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+                        $query = StudentNysc::whereIn('student_id', $ids);
+                        if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+                        foreach ($query->get() as $s) {
                             $rows[] = $this->mapStudentToExportRow($s);
                         }
                     }
                 } else {
-                    $students = StudentNysc::whereNotIn('student_id', $uploadedSet)->get();
+                    $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+                    $query = StudentNysc::whereNotIn('student_id', $uploadedSet);
+                    if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+                    $students = $query->get();
                     foreach ($students as $s) { $rows[] = $this->mapStudentToExportRow($s); }
                 }
             } elseif ($filter === 'uploaded_not_in_nysc') {
-                $nyscData = $this->getNyscDatabaseData();
+                $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+                $nyscData = $this->getNyscDatabaseData($sessionId);
                 $comparisonSet = $mode === 'matric_no' ? ($nyscData['matric_numbers'] ?? []) : ($nyscData['student_ids'] ?? []);
                 if (!is_array($comparisonSet)) { $comparisonSet = []; }
                 $uploadedNormalized = array_map(function($v) use ($mode) { return $mode==='matric_no'?trim((string)$v):$v; }, $uploadedSet);
@@ -952,11 +972,11 @@ class NyscUploadAnalysisController extends Controller
     /**
      * Export unuploaded students list
      */
-    public function exportUnuploaded(): JsonResponse
+    public function exportUnuploaded(Request $request): JsonResponse
     {
         try {
             // Get analysis data
-            $analysisResponse = $this->analyzeUploads();
+            $analysisResponse = $this->analyzeUploads($request);
             $analysisData = $analysisResponse->getData(true);
             
             if (!$analysisData['success']) {
@@ -965,8 +985,9 @@ class NyscUploadAnalysisController extends Controller
             
             $unuploadedIds = $analysisData['analysis']['unuploaded'];
             
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
             // Get detailed records for unuploaded students
-            $unuploadedStudents = StudentNysc::whereIn('student_id', $unuploadedIds)
+            $query = StudentNysc::whereIn('student_id', $unuploadedIds)
                 ->select([
                     'student_id',
                     'matric_no',
@@ -975,8 +996,10 @@ class NyscUploadAnalysisController extends Controller
                     'course_study',
                     'phone',
                     'email'
-                ])
-                ->get();
+                ]);
+            
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $unuploadedStudents = $query->get();
             
             return response()->json([
                 'success' => true,
@@ -1061,7 +1084,8 @@ class NyscUploadAnalysisController extends Controller
             ]);
             
             // Get NYSC database data
-            $nyscData = $this->getNyscDatabaseData();
+            $sessionId = request()->input('session_id') ?: AdminSetting::get('active_session_id');
+            $nyscData = $this->getNyscDatabaseData($sessionId);
             
             // Perform cross-reference analysis
             $analysis = $this->performCrossReferenceAnalysis(

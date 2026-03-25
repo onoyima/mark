@@ -108,6 +108,7 @@ class PaystackService
                     $studentNysc = StudentNysc::updateOrCreate(
                         ['student_id' => $payment->student_id],
                         [
+                            'nysc_session_id' => $payment->nysc_session_id,
                             'is_paid' => true,
                             'matric_no' => $tempSubmission->matric_no,
                             'fname' => $tempSubmission->fname,

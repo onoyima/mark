@@ -175,6 +175,14 @@ Route::prefix('nysc')->group(function () {
         Route::get('upload-analysis/export-unuploaded', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'exportUnuploaded']);
         Route::get('upload-analysis/export', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'exportUploadFiltered']);
         Route::get('upload-analysis/test-pdf', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'testPdfFile']);
+
+        // Session management
+        Route::get('sessions', [\App\Http\Controllers\NyscSessionController::class, 'index']);
+        Route::post('sessions', [\App\Http\Controllers\NyscSessionController::class, 'store']);
+        Route::put('sessions/{id}', [\App\Http\Controllers\NyscSessionController::class, 'update']);
+        Route::delete('sessions/{id}', [\App\Http\Controllers\NyscSessionController::class, 'destroy']);
+        Route::post('sessions/{id}/activate', [\App\Http\Controllers\NyscSessionController::class, 'activate']);
+        Route::get('sessions/active', [\App\Http\Controllers\NyscSessionController::class, 'active']);
         
         // Payment Verification routes
         Route::get('payments/pending-stats', [\App\Http\Controllers\NyscAdminController::class, 'getPendingPaymentsStats']);

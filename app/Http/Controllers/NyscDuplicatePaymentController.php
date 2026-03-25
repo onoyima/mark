@@ -23,16 +23,23 @@ class NyscDuplicatePaymentController extends Controller
             }
             $search = $request->get('search', '');
             
-            // Find students with more than one successful payment
-            $query = Student::withCount([
-                'payments as successful_payments_count' => function ($query) {
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+
+            // Find students with more than one successful payment in the selected session
+            $query = Student::whereHas('nyscRecord', function($q) use ($sessionId) {
+                if ($sessionId) { $q->where('nysc_session_id', $sessionId); }
+            })
+            ->withCount([
+                'payments as successful_payments_count' => function ($query) use ($sessionId) {
                     $query->where('status', 'successful');
+                    if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
                 }
             ])
             ->having('successful_payments_count', '>', 1)
-            ->with(['payments' => function ($query) {
-                $query->where('status', 'successful')
-                      ->orderBy('payment_date', 'desc');
+            ->with(['payments' => function ($query) use ($sessionId) {
+                $query->where('status', 'successful');
+                if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+                $query->orderBy('payment_date', 'desc');
             }, 'nyscRecord']);
             
             // Apply search if provided

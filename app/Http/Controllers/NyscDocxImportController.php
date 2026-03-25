@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Cache;
 use App\Services\DocxImportService;
+use App\Models\AdminSetting;
 use App\Models\StudentNysc;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Str;
@@ -350,15 +351,17 @@ class NyscDocxImportController extends Controller
     /**
      * Export complete student NYSC data to Excel
      *
-     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|\Illuminate\Http\JsonResponse
      */
-    public function exportStudentData()
+    public function exportStudentData(Request $request)
     {
         try {
             Log::info('Starting student data export');
 
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            
             // Get all student NYSC records with exact table columns
-            $students = StudentNysc::select([
+            $query = StudentNysc::select([
                 'matric_no',
                 'fname',
                 'mname', 
@@ -373,7 +376,10 @@ class NyscDocxImportController extends Controller
                 'jamb_no',
                 'course_study',
                 'study_mode'
-            ])->get();
+            ]);
+
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $students = $query->get();
 
             // Prepare data for export with exact database values
             $exportData = [];
@@ -506,9 +512,11 @@ class NyscDocxImportController extends Controller
                 ]);
             }
 
-            // Get ALL students for comprehensive matching
-            $allStudents = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree'])
-                ->get();
+            // Get ALL students for comprehensive matching within the session
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $query = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree']);
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $allStudents = $query->get();
 
             // Create a lookup array for faster matching
             $studentLookup = [];
@@ -805,15 +813,17 @@ class NyscDocxImportController extends Controller
     /**
      * Export students with NULL class_of_degree to Excel
      *
-     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|\Illuminate\Http\JsonResponse
      */
-    public function exportStudentsWithNullDegree()
+    public function exportStudentsWithNullDegree(Request $request)
     {
         try {
             Log::info('Starting export of students with NULL class_of_degree');
 
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+
             // Get students with NULL or empty class_of_degree
-            $students = StudentNysc::where(function($query) {
+            $query = StudentNysc::where(function($query) {
                 $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
             })
                 ->select([
@@ -831,7 +841,10 @@ class NyscDocxImportController extends Controller
                     'jamb_no',
                     'course_study',
                     'study_mode'
-                ])->get();
+                ]);
+
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $students = $query->get();
 
             // Prepare data for export with exact database values
             $exportData = [];
@@ -882,18 +895,32 @@ class NyscDocxImportController extends Controller
      *
      * @return JsonResponse
      */
-    public function getImportStats(): JsonResponse
+    public function getImportStats(Request $request): JsonResponse
     {
         try {
-            $stats = [
-                'total_students' => StudentNysc::count(),
-                'students_with_class_degree' => StudentNysc::whereNotNull('class_of_degree')->count(),
-                'students_without_class_degree' => StudentNysc::where(function($query) {
-                    $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
-                })->count(),
-                'class_degree_distribution' => StudentNysc::selectRaw('class_of_degree, COUNT(*) as count')
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            
+            $totalQuery = StudentNysc::query();
+            $withDegreeQuery = StudentNysc::whereNotNull('class_of_degree');
+            $withoutDegreeQuery = StudentNysc::where(function($query) {
+                $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
+            });
+            $distributionQuery = StudentNysc::selectRaw('class_of_degree, COUNT(*) as count')
                     ->whereNotNull('class_of_degree')
-                    ->groupBy('class_of_degree')
+                    ->groupBy('class_of_degree');
+
+            if ($sessionId) {
+                $totalQuery->where('nysc_session_id', $sessionId);
+                $withDegreeQuery->where('nysc_session_id', $sessionId);
+                $withoutDegreeQuery->where('nysc_session_id', $sessionId);
+                $distributionQuery->where('nysc_session_id', $sessionId);
+            }
+
+            $stats = [
+                'total_students' => $totalQuery->count(),
+                'students_with_class_degree' => $withDegreeQuery->count(),
+                'students_without_class_degree' => $withoutDegreeQuery->count(),
+                'class_degree_distribution' => $distributionQuery
                     ->get()
                     ->pluck('count', 'class_of_degree')
                     ->toArray()
@@ -946,8 +973,10 @@ class NyscDocxImportController extends Controller
             }
 
             // Get ALL students for comprehensive matching
-            $allStudents = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree'])
-                ->get();
+            $sessionId = request()->input('session_id') ?: AdminSetting::get('active_session_id');
+            $query = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree']);
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $allStudents = $query->get();
             
 
             // Create a lookup array for faster matching
@@ -1003,9 +1032,11 @@ class NyscDocxImportController extends Controller
             }
 
             // Count students with NULL or empty class_of_degree for reference
-            $studentsWithNullDegree = StudentNysc::where(function($query) {
+            $nullDegreeQuery = StudentNysc::where(function($query) {
                 $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
-            })->count();
+            });
+            if ($sessionId) { $nullDegreeQuery->where('nysc_session_id', $sessionId); }
+            $studentsWithNullDegree = $nullDegreeQuery->count();
 
             $summary = [
                 'total_records_in_file' => count($result['review_data']),
@@ -1101,7 +1132,10 @@ class NyscDocxImportController extends Controller
 
             $review = $process['review_data'] ?? [];
 
-            $students = StudentNysc::select(['id','matric_no','fname','mname','lname','class_of_degree'])->get();
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $query = StudentNysc::select(['id','matric_no','fname','mname','lname','class_of_degree']);
+            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+            $students = $query->get();
             $studentLookup = [];
             foreach ($students as $s) {
                 $studentLookup[strtoupper(trim(preg_replace('/\s+/', '', (string)$s->matric_no)))] = $s;
@@ -1237,6 +1271,7 @@ class NyscDocxImportController extends Controller
                 \DB::beginTransaction();
                 try {
                     foreach ($students as $s) {
+                        /** @var StudentNysc $s */
                         $scanned++;
                         $key = strtoupper(trim(preg_replace('/\s+/', '', (string)$s->matric_no)));
                         $docxDegree = $tieMap[$key] ?? null;
@@ -1313,27 +1348,40 @@ class NyscDocxImportController extends Controller
      *
      * @return JsonResponse
      */
-    public function getDataAnalysis(): JsonResponse
+    public function getDataAnalysis(Request $request): JsonResponse
     {
         try {
             Log::info('Starting comprehensive data analysis');
             
             // Database statistics
-            $totalStudentsInDb = StudentNysc::count();
-            $studentsWithNullDegree = StudentNysc::where(function($query) {
+            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+
+            $totalQuery = StudentNysc::query();
+            $nullDegreeQuery = StudentNysc::where(function($query) {
                 $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
-            })->count();
-            $studentsWithClassDegree = StudentNysc::where(function($query) {
+            });
+            $withDegreeQuery = StudentNysc::where(function($query) {
                 $query->whereNotNull('class_of_degree')->where('class_of_degree', '!=', '');
-            })->count();
+            });
+
+            if ($sessionId) {
+                $totalQuery->where('nysc_session_id', $sessionId);
+                $nullDegreeQuery->where('nysc_session_id', $sessionId);
+                $withDegreeQuery->where('nysc_session_id', $sessionId);
+            }
+
+            $totalStudentsInDb = $totalQuery->count();
+            $studentsWithNullDegree = $nullDegreeQuery->count();
+            $studentsWithClassDegree = $withDegreeQuery->count();
             
             // Get detailed null degree students
-            $nullDegreeStudents = StudentNysc::where(function($query) {
+            $detailedNullQuery = StudentNysc::where(function($query) {
                 $query->whereNull('class_of_degree')->orWhere('class_of_degree', '');
             })
-                ->select(['id', 'matric_no', 'fname', 'mname', 'lname', 'department'])
-                ->get()
-                ->toArray();
+                ->select(['id', 'matric_no', 'fname', 'mname', 'lname', 'department']);
+            
+            if ($sessionId) { $detailedNullQuery->where('nysc_session_id', $sessionId); }
+            $nullDegreeStudents = $detailedNullQuery->get()->toArray();
             
             // GRADUANDS file statistics
             $filePath = storage_path('app/GRADUANDS.docx');
@@ -1352,8 +1400,9 @@ class NyscDocxImportController extends Controller
                     $totalInGraduandsFile = count($result['review_data']);
                     
                     // Get ALL students for matching (not just NULL class_of_degree)
-                    $allStudents = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree'])
-                        ->get();
+                    $allQuery = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree']);
+                    if ($sessionId) { $allQuery->where('nysc_session_id', $sessionId); }
+                    $allStudents = $allQuery->get();
                     
                     // Create a lookup array for faster matching
                     $studentLookup = [];

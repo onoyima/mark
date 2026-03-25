@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Models\AdminSetting;
 
 class NyscStudentController extends Controller
 {
@@ -142,9 +143,11 @@ class NyscStudentController extends Controller
             $submissionCount = $nysc ? ($nysc->is_submitted ? 1 : 0) : 0;
             
             // Sum all successful payments for this student using optimized query
-            $totalPayments = NyscPayment::where('student_id', $student->id)
-                ->where('status', 'successful')
-                ->sum('amount') ?? 0;
+            $activeSessionId = AdminSetting::get('active_session_id');
+            $paymentsSumQuery = NyscPayment::where('student_id', $student->id)
+                ->where('status', 'successful');
+            if ($activeSessionId) { $paymentsSumQuery->where('nysc_session_id', $activeSessionId); }
+            $totalPayments = $paymentsSumQuery->sum('amount') ?? 0;
             
             // Count how many times student has updated their Student Data
             $dataUpdates = $nysc ? $nysc->updated_at->diffInDays($nysc->created_at) + 1 : 0;
@@ -284,8 +287,8 @@ class NyscStudentController extends Controller
             'payment_amount' => 'required|numeric|min:0',
         ]);
 
-        // Generate unique session ID for this submission
-        $sessionId = NyscTempSubmission::generateSessionId();
+        // Tie to active session
+        $sessionId = AdminSetting::get('active_session_id');
 
         $activeSession = NyscSession::activeSession();
         if (!$activeSession) {
@@ -298,8 +301,8 @@ class NyscStudentController extends Controller
         // Prepare data for temporary storage
         $tempData = array_diff_key($validated, ['payment_amount' => '']);
         $tempData['student_id'] = $student->id;
-        $tempData['session_id'] = $sessionId;
         $tempData['nysc_session_id'] = $activeSession->id;
+        $tempData['submission_token'] = NyscTempSubmission::generateSessionId();
         $tempData['status'] = 'pending';
 
         // Delete any existing pending submissions for this student
@@ -316,6 +319,7 @@ class NyscStudentController extends Controller
             'message' => 'Details Confirmed. You can now proceed to payment.',
             'data' => [
                 'session_id' => $sessionId,
+                'submission_token' => $tempSubmission->submission_token,
                 'payment_amount' => $validated['payment_amount'],
                 'student_id' => $student->id,
                 'expires_at' => $tempSubmission->expires_at
@@ -361,12 +365,14 @@ class NyscStudentController extends Controller
             $activeSession = NyscSession::activeSession();
 
             // Create payment record
+            $activeSessionId = AdminSetting::get('active_session_id');
             $payment = NyscPayment::create([
+                'student_id' => $student->id,
                 'student_nysc_id' => $validated['student_nysc_id'],
-                'nysc_session_id' => $activeSession ? $activeSession->id : null,
+                'nysc_session_id' => $activeSession ? $activeSession->id : AdminSetting::get('active_session_id'),
                 'amount' => $validated['amount'],
                 'payment_reference' => $validated['payment_reference'],
-                'status' => 'successful', // Assuming payment verification is done externally
+                'status' => 'successful',
                 'payment_method' => $validated['payment_method'],
                 'transaction_id' => $validated['transaction_id'] ?? null,
                 'payment_data' => $validated['payment_data'] ?? null,

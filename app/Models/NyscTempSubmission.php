@@ -15,8 +15,7 @@ class NyscTempSubmission extends Model
     protected $fillable = [
         'student_id',
         'nysc_session_id',
-        'session_id',
-        // Personal Information
+        'submission_token',
         'fname',
         'lname',
         'mname',
@@ -29,7 +28,6 @@ class NyscTempSubmission extends Model
         'state',
         'lga',
         'username',
-        // Academic Information
         'matric_no',
         'department',
         'course_study',
@@ -38,7 +36,6 @@ class NyscTempSubmission extends Model
         'cgpa',
         'jamb_no',
         'study_mode',
-        // Status
         'status',
         'expires_at',
     ];
@@ -124,7 +121,7 @@ class NyscTempSubmission extends Model
         $data = $this->toArray();
 
         // Remove fields that don't belong in student_nysc table
-        unset($data['id'], $data['session_id'], $data['status'], $data['expires_at'],
+        unset($data['id'], $data['nysc_session_id'], $data['submission_token'], $data['status'], $data['expires_at'],
               $data['created_at'], $data['updated_at']);
 
         // Add submission tracking fields

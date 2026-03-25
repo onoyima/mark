@@ -15,7 +15,7 @@ class NyscPayment extends Model
         'student_id',
         'student_nysc_id',
         'nysc_session_id',
-        'session_id',
+        'submission_token',
         'amount',
         'payment_reference',
         'status',
@@ -31,6 +31,11 @@ class NyscPayment extends Model
         'payment_data' => 'array',
         'payment_date' => 'datetime',
     ];
+
+    public function session()
+    {
+        return $this->belongsTo(NyscSession::class, 'nysc_session_id');
+    }
     
     /**
      * Get the student that owns this payment.

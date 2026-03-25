@@ -85,12 +85,13 @@ class TestNyscPaymentFlow extends Command
 
     private function testNormalFlow($student, $studentAcademic, $debug)
     {
-        $sessionId = 'NYSC-TEST-' . Str::random(10) . '-' . time();
+        $submissionToken = 'NYSC-TEST-' . Str::random(10) . '-' . time();
         
         // Create temp submission
         $tempSubmission = NyscTempSubmission::create([
             'student_id' => $student->id,
-            'session_id' => $sessionId,
+            'submission_token' => $submissionToken,
+            'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
             'first_name' => $student->first_name,
             'last_name' => $student->last_name,
             'dob' => $student->dob,
@@ -116,7 +117,8 @@ class TestNyscPaymentFlow extends Command
         $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
-            'session_id' => $sessionId,
+            'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
+            'submission_token' => $submissionToken,
             'amount' => $paymentAmount,
             'payment_reference' => 'TEST-' . Str::random(10),
             'status' => 'pending',
@@ -168,13 +170,14 @@ class TestNyscPaymentFlow extends Command
 
     private function testMissingTempSubmission($student, $studentAcademic, $debug)
     {
-        $sessionId = 'NYSC-TEST-MISSING-' . Str::random(10) . '-' . time();
+        $submissionTokenMissing = 'NYSC-TEST-MISSING-' . Str::random(10) . '-' . time();
         
         // Create payment record without temp submission (simulating expired/deleted temp submission)
         $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
-            'session_id' => $sessionId,
+            'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
+            'submission_token' => $submissionTokenMissing,
             'amount' => $paymentAmount,
             'payment_reference' => 'TEST-MISSING-' . Str::random(10),
             'status' => 'pending',
@@ -218,13 +221,14 @@ class TestNyscPaymentFlow extends Command
 
     private function testAlreadyProcessedPayment($student, $studentAcademic, $debug)
     {
-        $sessionId = 'NYSC-TEST-PROCESSED-' . Str::random(10) . '-' . time();
+        $submissionTokenProcessed = 'NYSC-TEST-PROCESSED-' . Str::random(10) . '-' . time();
         
         // Create already successful payment
         $paymentAmount = \App\Models\AdminSetting::get('payment_amount');
         $payment = NyscPayment::create([
             'student_id' => $student->id,
-            'session_id' => $sessionId,
+            'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
+            'submission_token' => $submissionTokenProcessed,
             'amount' => $paymentAmount,
             'payment_reference' => 'TEST-PROCESSED-' . Str::random(10),
             'status' => 'successful',
@@ -235,6 +239,7 @@ class TestNyscPaymentFlow extends Command
         // Create corresponding NYSC record
         $nysc = StudentNysc::create([
             'student_id' => $student->id,
+            'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
             'first_name' => $student->first_name,
             'last_name' => $student->last_name,
             'dob' => $student->dob,
@@ -287,10 +292,10 @@ class TestNyscPaymentFlow extends Command
         try {
             DB::beginTransaction();
 
-            // Find the temporary submission using session_id
+            // Find the temporary submission using submission_token
             $tempSubmission = null;
-            if ($payment->session_id) {
-                $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)
+            if ($payment->submission_token) {
+                $tempSubmission = NyscTempSubmission::where('submission_token', $payment->submission_token)
                                                   ->where('status', 'pending')
                                                   ->first();
             }
@@ -334,7 +339,7 @@ class TestNyscPaymentFlow extends Command
                         'toStudentNyscData' => function() use ($reconstructedData) {
                             // Remove fields that don't belong in student_nysc table
                             $data = $reconstructedData;
-                            unset($data['id'], $data['session_id'], $data['status'], $data['expires_at'], 
+                            unset($data['id'], $data['nysc_session_id'], $data['submission_token'], $data['status'], $data['expires_at'], 
                                   $data['created_at'], $data['updated_at']);
                             
                             // Add submission tracking fields
@@ -369,6 +374,7 @@ class TestNyscPaymentFlow extends Command
                 array_merge($nyscData, [
                     'is_paid' => true,
                     'is_submitted' => true,
+                    'nysc_session_id' => $payment->nysc_session_id ?? \App\Models\AdminSetting::get('active_session_id'),
                 ])
             );
 

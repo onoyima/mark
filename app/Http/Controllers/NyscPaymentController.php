@@ -6,6 +6,8 @@ use App\Models\StudentNysc;
 use App\Models\NyscPayment;
 use App\Models\NyscSession;
 use App\Models\NyscTempSubmission;
+use App\Models\Student;
+use App\Models\StudentAcademic;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -25,16 +27,16 @@ class NyscPaymentController extends Controller
     {
         $student = Auth::user();
 
-        // Validate session_id is provided
-        $sessionId = $request->input('session_id');
-        if (!$sessionId) {
+        // Validate submission_token (formerly session_id) is provided
+        $submissionToken = $request->input('submission_token') ?? $request->input('session_id');
+        if (!$submissionToken) {
             return response()->json([
-                'message' => 'Session ID is required for payment initiation.',
+                'message' => 'Submission token is required for payment initiation.',
             ], 400);
         }
 
         // Find the temporary submission
-        $tempSubmission = NyscTempSubmission::where('session_id', $sessionId)
+        $tempSubmission = NyscTempSubmission::where('submission_token', $submissionToken)
                                           ->where('student_id', $student->id)
                                           ->where('status', 'pending')
                                           ->first();
@@ -80,9 +82,10 @@ class NyscPaymentController extends Controller
                 // 'callback_url' => config('app.frontend_url', 'http://localhost:3000') . '/student/payment?status=success&reference=' . $reference,
                 'metadata' => [
                     'student_id' => $student->id,
-                    'session_id' => $sessionId,
+                    'submission_token' => $submissionToken,
+                    'nysc_session_id' => \App\Models\AdminSetting::get('active_session_id'),
                     'matric_no' => $tempSubmission->matric_no,
-                    'phone' => $tempSubmission->phone, // Include phone from temporary submission
+                    'phone' => $tempSubmission->phone,
                 ],
             ]);
 
@@ -98,7 +101,7 @@ class NyscPaymentController extends Controller
                     'amount' => $amount,
                     'status' => 'pending',
                     'payment_method' => 'paystack',
-                    'session_id' => $sessionId,
+                    'submission_token' => $submissionToken,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -182,17 +185,17 @@ class NyscPaymentController extends Controller
                     ]);
                 }
 
-                // Find the temporary submission using session_id
+                // Find the temporary submission using submission_token
                 $tempSubmission = null;
-                if ($payment->session_id) {
-                    $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)
+                if ($payment->submission_token) {
+                    $tempSubmission = NyscTempSubmission::where('submission_token', $payment->submission_token)
                                                       ->where('status', 'pending')
                                                       ->first();
 
                     // Check if temp submission has expired
                     if ($tempSubmission && $tempSubmission->hasExpired()) {
                         Log::info('Temp submission expired during payment verification, using fallback', [
-                            'session_id' => $payment->session_id,
+                            'submission_token' => $payment->submission_token,
                             'student_id' => $payment->student_id,
                             'payment_reference' => $payment->payment_reference
                         ]);
@@ -307,7 +310,7 @@ class NyscPaymentController extends Controller
                         array_merge($nyscData, [
                             'is_paid' => true,
                             'is_submitted' => true,
-                            'nysc_session_id' => $payment->nysc_session_id,
+                            'nysc_session_id' => $payment->nysc_session_id ?? \App\Models\AdminSetting::get('active_session_id'),
                         ])
                     );
 
@@ -358,7 +361,7 @@ class NyscPaymentController extends Controller
                     Log::error('Failed to process payment and submit data', [
                         'error' => $e->getMessage(),
                         'payment_reference' => $reference,
-                        'session_id' => $payment->session_id
+                        'submission_token' => $payment->submission_token
                     ]);
 
                     return response()->json([
@@ -430,7 +433,7 @@ class NyscPaymentController extends Controller
                             array_merge($nyscData, [
                                 'is_paid' => true,
                                 'is_submitted' => true,
-                                'nysc_session_id' => $payment->nysc_session_id,
+                                'nysc_session_id' => $payment->nysc_session_id ?? \App\Models\AdminSetting::get('active_session_id'),
                             ])
                         );
 
@@ -475,7 +478,7 @@ class NyscPaymentController extends Controller
 
                     Log::warning('Payment webhook processed but no temp submission found', [
                         'reference' => $reference,
-                        'session_id' => $payment->session_id,
+                        'submission_token' => $payment->submission_token,
                     ]);
                 }
             }
