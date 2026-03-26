@@ -411,10 +411,10 @@ class NyscPaymentController extends Controller
             $payment = NyscPayment::where('payment_reference', $reference)->first();
 
             if ($payment && $payment->status !== 'successful') {
-                // Find the temporary submission using session_id
+                // Find the temporary submission using submission_token
                 $tempSubmission = null;
-                if ($payment->session_id) {
-                    $tempSubmission = NyscTempSubmission::where('session_id', $payment->session_id)
+                if ($payment->submission_token) {
+                    $tempSubmission = NyscTempSubmission::where('submission_token', $payment->submission_token)
                                                       ->where('status', 'pending')
                                                       ->first();
                 }
@@ -465,7 +465,7 @@ class NyscPaymentController extends Controller
                         Log::error('Failed to process webhook payment and submit data', [
                             'error' => $e->getMessage(),
                             'payment_reference' => $reference,
-                            'session_id' => $payment->session_id
+                            'submission_token' => $payment->submission_token
                         ]);
                     }
                 } else {
