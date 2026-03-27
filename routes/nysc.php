@@ -72,6 +72,7 @@ Route::prefix('nysc')->group(function () {
         Route::get('students', [NyscAdminController::class, 'getStudents']);
         Route::get('students-data', [NyscAdminController::class, 'getStudentsData']);
         Route::put('student/{studentId}', [NyscAdminController::class, 'updateStudent']);
+        Route::delete('student/{id}', [NyscAdminController::class, 'deleteStudent']);
         Route::get('exports/{format}', [NyscAdminController::class, 'export']);
         Route::get('export-students/{format}', [NyscAdminController::class, 'exportStudents']);
         Route::get('payments', [NyscAdminController::class, 'payments']);
@@ -86,6 +87,7 @@ Route::prefix('nysc')->group(function () {
         Route::get('submissions', [NyscAdminController::class, 'getSubmissions']);
         Route::get('submissions/{submissionId}', [NyscAdminController::class, 'getSubmissionDetails']);
         Route::put('submissions/{submissionId}/status', [NyscAdminController::class, 'updateSubmissionStatus']);
+        Route::delete('submissions/{id}', [NyscAdminController::class, 'deleteSubmission']);
         
         // Export jobs management routes
         Route::post('export-jobs', [NyscAdminController::class, 'createExportJob']);

@@ -33,24 +33,41 @@ class NyscAdminController extends Controller
     public function dashboard(Request $request): \Illuminate\Http\JsonResponse
     {
         try {
+            $month = $request->query('month');
+            $year = $request->query('year');
             $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
             
+            // Total Students
             $totalStudentsQuery = StudentNysc::where('is_submitted', true);
             if ($sessionId) { $totalStudentsQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $totalStudentsQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $totalStudents = $totalStudentsQuery->count();
+
+            // Total Paid
             $totalPaidQuery = StudentNysc::where('is_submitted', true)->where('is_paid', true);
             if ($sessionId) { $totalPaidQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $totalPaidQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $totalPaid = $totalPaidQuery->count();
             $totalUnpaid = $totalStudents - $totalPaid;
 
             // Get temp submissions count
             $tempSubmissionsQuery = \App\Models\NyscTempSubmission::where('status', 'pending');
             if ($sessionId) { $tempSubmissionsQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $tempSubmissionsQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $tempSubmissions = $tempSubmissionsQuery->count();
 
-            // Department breakdown using database aggregation
+            // Department breakdown
             $departmentStatsQuery = StudentNysc::where('is_submitted', true);
             if ($sessionId) { $departmentStatsQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $departmentStatsQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $departmentStats = $departmentStatsQuery
                 ->selectRaw('department, COUNT(*) as count')
                 ->groupBy('department')
@@ -63,9 +80,12 @@ class NyscAdminController extends Controller
                     ];
                 });
 
-            // Gender breakdown using database aggregation
+            // Gender breakdown
             $genderStatsQuery = StudentNysc::where('is_submitted', true);
             if ($sessionId) { $genderStatsQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $genderStatsQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $genderStats = $genderStatsQuery
                 ->selectRaw('gender, COUNT(*) as count')
                 ->groupBy('gender')
@@ -78,9 +98,12 @@ class NyscAdminController extends Controller
                     ];
                 });
 
-            // Payment analytics using database aggregation
+            // Payment analytics
             $paymentStatsQuery = \App\Models\NyscPayment::where('status', 'successful');
             if ($sessionId) { $paymentStatsQuery->where('nysc_session_id', $sessionId); }
+            if ($month && $year) {
+                $paymentStatsQuery->whereMonth('created_at', $month)->whereYear('created_at', $year);
+            }
             $paymentStats = $paymentStatsQuery
                 ->selectRaw('COUNT(*) as total_payments, SUM(amount) as total_revenue, AVG(amount) as average_amount')
                 ->first();
@@ -89,32 +112,36 @@ class NyscAdminController extends Controller
             $averageAmount = $paymentStats->average_amount ?? 0;
             $successRate = $totalStudents > 0 ? round(($totalPaid / $totalStudents) * 100, 1) : 0;
 
-            // Monthly payment trends (last 7 months) using database aggregation
+            // Monthly trends
             $monthlyTrends = [];
             for ($i = 6; $i >= 0; $i--) {
                 $date = now()->subMonths($i);
-                $monthStart = $date->startOfMonth()->format('Y-m-d H:i:s');
-                $monthEnd = $date->endOfMonth()->format('Y-m-d H:i:s');
-
-                $monthStatsQuery = \App\Models\NyscPayment::where('status', 'successful');
-                if ($sessionId) { $monthStatsQuery->where('nysc_session_id', $sessionId); }
-                $monthStats = $monthStatsQuery
-                    ->whereBetween('payment_date', [$monthStart, $monthEnd])
-                    ->selectRaw('COUNT(*) as count, SUM(amount) as revenue')
-                    ->first();
-
+                $m = $date->month;
+                $y = $date->year;
+                
+                $revenue = \App\Models\NyscPayment::where('status', 'successful')
+                    ->whereMonth('created_at', $m)
+                    ->whereYear('created_at', $y)
+                    ->when($sessionId, function($q) use ($sessionId) { $q->where('nysc_session_id', $sessionId); })
+                    ->sum('amount');
+                    
+                $count = \App\Models\NyscPayment::where('status', 'successful')
+                    ->whereMonth('created_at', $m)
+                    ->whereYear('created_at', $y)
+                    ->when($sessionId, function($q) use ($sessionId) { $q->where('nysc_session_id', $sessionId); })
+                    ->count();
+                    
                 $monthlyTrends[] = [
                     'month' => $date->format('M'),
-                    'revenue' => $monthStats->revenue ?? 0,
-                    'count' => $monthStats->count ?? 0
+                    'revenue' => (float)$revenue,
+                    'count' => $count
                 ];
             }
 
-            // Recent registrations (last 10) using efficient query
+            // Recent registrations (last 10)
             $recentRegistrationsQuery = StudentNysc::where('is_submitted', true);
             if ($sessionId) { $recentRegistrationsQuery->where('nysc_session_id', $sessionId); }
             $recentRegistrations = $recentRegistrationsQuery
-                ->with('student:id,fname,lname')
                 ->select('id', 'student_id', 'fname', 'lname', 'matric_no', 'department', 'is_paid', 'created_at')
                 ->orderBy('created_at', 'desc')
                 ->limit(10)
@@ -141,20 +168,15 @@ class NyscAdminController extends Controller
                 'departmentBreakdown' => $departmentStats,
                 'genderBreakdown' => $genderStats,
                 'paymentAnalytics' => [
-                    'totalRevenue' => $totalRevenue,
-                    'averageAmount' => round($averageAmount, 2),
+                    'totalRevenue' => (float)$totalRevenue,
+                    'averageAmount' => (float)$averageAmount,
                     'successRate' => $successRate,
                     'monthlyTrends' => $monthlyTrends
                 ],
                 'system_status' => $this->getSystemStatus(),
             ]);
         } catch (\Exception $e) {
-            \Log::error('Dashboard data loading failed: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to load dashboard data',
-                'error' => $e->getMessage()
-            ], 500);
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
@@ -202,7 +224,13 @@ class NyscAdminController extends Controller
      */
     public function updateStudent(Request $request, $studentId): \Illuminate\Http\JsonResponse
     {
-        $nysc = StudentNysc::where('student_id', $studentId)->first();
+        // Try to find by direct StudentNysc ID first if passed in request, else by student_id
+        $id = $request->input('id');
+        if ($id) {
+            $nysc = StudentNysc::find($id);
+        } else {
+            $nysc = StudentNysc::where('student_id', $studentId)->first();
+        }
 
         if (!$nysc) {
             return response()->json([
@@ -221,14 +249,17 @@ class NyscAdminController extends Controller
             'phone' => 'sometimes|string|max:20',
             'email' => 'sometimes|email|max:255',
             'address' => 'sometimes|string',
+            'state' => 'sometimes|string|max:100',
             'state_of_origin' => 'sometimes|string|max:100',
             'lga' => 'sometimes|string|max:100',
             'matric_no' => 'sometimes|string|max:50',
+            'course_study' => 'sometimes|string|max:255',
             'course_of_study' => 'sometimes|string|max:255',
             'department' => 'sometimes|string|max:255',
             'faculty' => 'sometimes|string|max:255',
             'graduation_year' => 'sometimes|string|size:4',
             'cgpa' => 'sometimes|numeric|min:0|max:5',
+            'jamb_no' => 'sometimes|string|max:20',
             'jambno' => 'sometimes|string|max:20',
             'study_mode' => 'sometimes|string|max:50',
             'emergency_contact_name' => 'sometimes|string|max:255',
@@ -1140,6 +1171,7 @@ class NyscAdminController extends Controller
         return response()->json(['settings' => $settings]);
     }
 
+
     /**
      * Update system settings with validation
      *
@@ -1699,61 +1731,69 @@ class NyscAdminController extends Controller
     }
 
     /**
-     * Get temporary submissions
+     * Get temporary submissions.
      *
      * @param \Illuminate\Http\Request $request
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getSubmissions(Request $request): \Illuminate\Http\JsonResponse
+    public function getSubmissions(Request $request)
     {
         try {
             $page = $request->get('page', 1);
             $limit = $request->get('limit', 10);
-
-            // Get temporary submissions with student information
-            $query = \App\Models\NyscTempSubmission::with(['student'])
-                ->orderBy('created_at', 'desc');
-
-            $sessionId = $request->input('session_id');
+            $sessionId = $request->get('session_id');
             if (!$sessionId) {
-                $activeSessionId = AdminSetting::get('active_session_id');
-                if ($activeSessionId) { $sessionId = $activeSessionId; }
+                try {
+                    $sessionId = AdminSetting::get('active_session_id');
+                } catch (\Exception $e) {
+                    $sessionId = null;
+                }
             }
-            if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
+
+            $query = NyscTempSubmission::orderBy('created_at', 'desc');
+            if ($sessionId) {
+                $query->where('nysc_session_id', $sessionId);
+            }
 
             $submissions = $query->paginate($limit, ['*'], 'page', $page);
 
-            $formattedSubmissions = $submissions->map(function($submission) {
-                $student = $submission->student;
-                $formData = json_decode($submission->form_data, true) ?? [];
-
+            // Map data to a consistent format for the frontend
+            $mappedSubmissions = collect($submissions->items())->map(function($submission) {
                 return [
                     'id' => $submission->id,
                     'student_id' => $submission->student_id,
-                    'student_name' => $student ? $student->fname . ' ' . $student->lname : 'N/A',
-                    'matric_number' => $student ? $student->matric_no : 'N/A',
-                    'email' => $student ? $student->email : 'N/A',
-                    'department' => $formData['department'] ?? 'N/A',
-                    'faculty' => $formData['faculty'] ?? 'N/A',
-                    'level' => $formData['level'] ?? 'N/A',
+                    'fname' => $submission->fname,
+                    'lname' => $submission->lname,
+                    'mname' => $submission->mname,
+                    'matric_no' => $submission->matric_no,
+                    'email' => $submission->email ?? 'N/A',
+                    'phone' => $submission->phone ?? 'N/A',
+                    'department' => $submission->department,
+                    'faculty' => $submission->faculty ?? 'N/A',
+                    'gender' => $submission->gender ?? 'N/A',
+                    'dob' => $submission->dob ? $submission->dob->format('Y-m-d') : 'N/A',
+                    'marital_status' => $submission->marital_status ?? 'N/A',
+                    'state' => $submission->state ?? 'N/A',
+                    'lga' => $submission->lga ?? 'N/A',
+                    'cgpa' => $submission->cgpa ?? 'N/A',
+                    'graduation_year' => $submission->graduation_year ?? 'N/A',
+                    'jamb_no' => $submission->jamb_no ?? 'N/A',
+                    'course_study' => $submission->course_study ?? 'N/A',
                     'submission_type' => 'initial',
-                    'submission_status' => $submission->status,
-                    'submitted_data' => $formData,
-                    'submission_date' => $submission->created_at,
-                    'reviewed_date' => $submission->reviewed_at,
-                    'reviewed_by' => $submission->reviewed_by,
-                    'review_notes' => $submission->review_notes,
-                    'created_at' => $submission->created_at,
-                    'updated_at' => $submission->updated_at,
+                    'submission_status' => $submission->status ?? 'pending',
+                    'submission_date' => $submission->created_at->toIso8601String(),
+                    'created_at' => $submission->created_at->toIso8601String(),
+                    'updated_at' => $submission->updated_at->toIso8601String(),
                 ];
             });
 
             return response()->json([
                 'success' => true,
-                'submissions' => $formattedSubmissions,
+                'submissions' => $mappedSubmissions,
                 'total' => $submissions->total(),
                 'current_page' => $submissions->currentPage(),
                 'last_page' => $submissions->lastPage(),
+                'per_page' => $submissions->perPage(),
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -1782,21 +1822,19 @@ class NyscAdminController extends Controller
             $submissionDetails = [
                 'id' => $submission->id,
                 'student_id' => $submission->student_id,
-                'student_name' => $student ? $student->fname . ' ' . $student->lname : 'N/A',
-                'matric_number' => $student ? $student->matric_no : 'N/A',
-                'email' => $student ? $student->email : 'N/A',
-                'department' => $formData['department'] ?? 'N/A',
-                'faculty' => $formData['faculty'] ?? 'N/A',
-                'level' => $formData['level'] ?? 'N/A',
+                'student_name' => trim(($submission->fname ?? '') . ' ' . ($submission->lname ?? '')),
+                'matric_number' => $submission->matric_no,
+                'email' => $submission->email ?? 'N/A',
+                'phone' => $submission->phone ?? 'N/A',
+                'department' => $submission->department,
+                'faculty' => $submission->faculty ?? 'N/A',
+                'submission_token' => $submission->submission_token,
                 'submission_type' => 'initial',
-                'submission_status' => $submission->status,
-                'submitted_data' => $formData,
-                'submission_date' => $submission->created_at,
-                'reviewed_date' => $submission->reviewed_at,
-                'reviewed_by' => $submission->reviewed_by,
-                'review_notes' => $submission->review_notes,
-                'created_at' => $submission->created_at,
-                'updated_at' => $submission->updated_at,
+                'submission_status' => $submission->status ?? 'pending',
+                'submitted_data' => $submission->toArray(), // Returns all fields
+                'submission_date' => $submission->created_at->toIso8601String(),
+                'created_at' => $submission->created_at->toIso8601String(),
+                'updated_at' => $submission->updated_at->toIso8601String(),
             ];
 
             return response()->json([
@@ -4579,5 +4617,53 @@ class NyscAdminController extends Controller
         \App\Models\AdminSetting::set($keyDup, json_encode($arrDup), 'json', 'Hidden student payments (duplicates)', 'payment');
         \Log::info('Payments hide toggle', ['by' => $user->email, 'mode' => $mode, 'action' => $action, 'student_ids' => $ids]);
         return response()->json(['success' => true, 'message' => 'Updated', 'hidden_all' => count($arrAll), 'hidden_duplicates' => count($arrDup)]);
+    }
+
+    /**
+     * Delete a student's NYSC record
+     *
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function deleteStudent($id): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $nysc = \App\Models\StudentNysc::findOrFail($id);
+            $nysc->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Student record deleted successfully.',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete student record: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete a temporary submission
+     *
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function deleteSubmission($id): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $submission = \App\Models\NyscTempSubmission::findOrFail($id);
+            $submission->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Submission deleted successfully.',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete submission: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }
