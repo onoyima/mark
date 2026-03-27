@@ -418,6 +418,22 @@ class NyscPaymentController extends Controller
                                                       ->first();
                 }
 
+                // Fallback 1: Try student_id from payment record
+                if (!$tempSubmission && $payment->student_id) {
+                    $tempSubmission = NyscTempSubmission::where('student_id', $payment->student_id)
+                                                      ->where('status', 'pending')
+                                                      ->orderBy('created_at', 'desc')
+                                                      ->first();
+                }
+
+                // Fallback 2: Try student_id from metadata if available
+                if (!$tempSubmission && isset($data['metadata']['student_id'])) {
+                    $tempSubmission = NyscTempSubmission::where('student_id', $data['metadata']['student_id'])
+                                                      ->where('status', 'pending')
+                                                      ->orderBy('created_at', 'desc')
+                                                      ->first();
+                }
+
                 if ($tempSubmission) {
                     try {
                         // Begin database transaction
