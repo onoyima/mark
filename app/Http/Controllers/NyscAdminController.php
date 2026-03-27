@@ -9,6 +9,7 @@ use App\Models\NyscSession;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Models\AdminSetting;
+use App\Models\VuaSession;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -151,7 +152,8 @@ class NyscAdminController extends Controller
                         'id' => $student->student_id,
                         'name' => trim(($student->fname ?? '') . ' ' . ($student->lname ?? '')),
                         'matric_no' => $student->matric_no,
-                        'department' => $student->department,
+                        'cgpa' => $student->cgpa,
+                        'class_of_degree' => $student->class_of_degree,
                         'is_paid' => $student->is_paid,
                         'created_at' => $student->created_at
                     ];
@@ -216,6 +218,216 @@ class NyscAdminController extends Controller
     }
 
     /**
+     * Create a new student NYSC record (admin only)
+     */
+    public function createStudent(Request $request): \Illuminate\Http\JsonResponse
+    {
+        if ($request->has('gender')) $request->merge(['gender' => strtolower($request->gender)]);
+        if ($request->has('marital_status')) $request->merge(['marital_status' => strtolower($request->marital_status)]);
+
+        $validated = $request->validate([
+            'fname'           => 'required|string|max:100',
+            'lname'           => 'required|string|max:100',
+            'mname'           => 'nullable|string|max:100',
+            'gender'          => 'required|in:male,female,other',
+            'dob'             => 'nullable|date',
+            'marital_status'  => 'nullable|in:single,married,divorced,widowed',
+            'phone'           => 'nullable|string|max:20',
+            'email'           => 'nullable|email|max:255',
+            'address'         => 'nullable|string',
+            'state'           => 'nullable|string|max:100',
+            'lga'             => 'nullable|string|max:100',
+            'matric_no'       => [
+                'required',
+                'string',
+                'max:50',
+                function ($attribute, $value, $fail) {
+                    if (!str_starts_with(strtoupper($value), 'VUG/')) {
+                        $fail('The ' . $attribute . ' must start with VUG/');
+                    }
+                },
+            ],
+            'department'      => 'nullable|string|max:255',
+            'course_study'    => 'nullable|string|max:255',
+            'graduation_year' => 'nullable|string|max:10',
+            'cgpa'            => 'nullable|numeric|min:0|max:5',
+            'class_of_degree' => 'nullable|string|max:100',
+            'jamb_no'         => 'nullable|string|max:20',
+            'study_mode'      => 'nullable|string|max:50',
+            'student_id'      => 'nullable|integer',
+            'is_military'     => 'nullable|boolean',
+            'is_status'       => 'nullable|boolean',
+        ]);
+
+        $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+
+        // Check for duplicate matric_no
+        if (StudentNysc::where('matric_no', $validated['matric_no'])->exists()) {
+            return response()->json(['message' => 'Matric number already exists.'], 422);
+        }
+
+        $nysc = StudentNysc::create(array_merge($validated, [
+            'nysc_session_id' => $sessionId,
+            'is_submitted'    => true,
+            'is_paid'         => false,
+            'is_status'       => $request->input('is_status', true),
+        ]));
+
+        return response()->json([
+            'message' => 'Student record created successfully.',
+            'data'    => $nysc,
+        ], 201);
+    }
+
+    /**
+     * Download CSV template for bulk upload
+     */
+    public function downloadStudentTemplate()
+    {
+        $headers = [
+            'student_id', 'fname', 'mname', 'lname', 'gender', 'dob', 'marital_status', 
+            'phone', 'email', 'address', 'state', 'lga', 'matric_no', 'department', 
+            'course_study', 'graduation_year', 'cgpa', 'class_of_degree', 'jamb_no', 'study_mode', 
+            'is_military', 'is_status'
+        ];
+
+        $examples = StudentNysc::latest()->limit(3)->get();
+
+        $callback = function() use ($headers, $examples) {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, $headers);
+            
+            if ($examples->isEmpty()) {
+                fputcsv($file, [
+                    '1001', 'John', 'Quincy', 'Doe', 'male', '2000-01-01', 'single',
+                    '08012345678', 'john@example.com', '123 University Way', 'Lagos', 'Ikeja', 'VUG/CMP/20/1234', 'Computer Science',
+                    'B.Sc Computer Science', '2024', '4.50', 'First Class', '202412345678AB', 'Full-Time',
+                    '0', '1'
+                ]);
+            } else {
+                foreach ($examples as $s) {
+                    fputcsv($file, [
+                        $s->student_id, $s->fname, $s->mname, $s->lname, $s->gender, 
+                        $s->dob ? (is_string($s->dob) ? $s->dob : $s->dob->format('Y-m-d')) : null, 
+                        $s->marital_status, $s->phone, $s->email, $s->address, $s->state, $s->lga, 
+                        $s->matric_no, $s->department, $s->course_study, $s->graduation_year, 
+                        $s->cgpa, $s->class_of_degree, $s->jamb_no, $s->study_mode,
+                        $s->is_military ? '1' : '0', $s->is_status ? '1' : '0'
+                    ]);
+                }
+            }
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, [
+            "Content-type"        => "text/csv",
+            "Content-Disposition" => "attachment; filename=student_upload_template.csv",
+        ]);
+    }
+
+    /**
+     * Bulk upload students from CSV
+     */
+    public function bulkUploadStudents(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:csv,txt|max:5120',
+        ]);
+
+        $file = $request->file('file');
+        $path = $file->getRealPath();
+        $data = array_map('str_getcsv', file($path));
+        
+        if (count($data) < 2) {
+            return response()->json(['message' => 'The CSV file is empty or missing headers.'], 422);
+        }
+
+        $headers = array_shift($data);
+        $expectedHeaders = [
+            'student_id', 'fname', 'mname', 'lname', 'gender', 'dob', 'marital_status', 
+            'phone', 'email', 'address', 'state', 'lga', 'matric_no', 'department', 
+            'course_study', 'graduation_year', 'cgpa', 'class_of_degree', 'jamb_no', 'study_mode', 
+            'is_military', 'is_status'
+        ];
+
+        // Map header indices
+        $headerIndices = [];
+        foreach ($expectedHeaders as $expected) {
+            $index = array_search($expected, $headers);
+            if ($index !== false) {
+                $headerIndices[$expected] = $index;
+            }
+        }
+
+        if (!isset($headerIndices['matric_no'])) {
+            return response()->json(['message' => 'Missing required column: matric_no'], 422);
+        }
+
+        $sessionId = AdminSetting::get('active_session_id');
+        $successCount = 0;
+        $skipCount = 0;
+        $errorCount = 0;
+
+        foreach ($data as $row) {
+            try {
+                $matricNo = $row[$headerIndices['matric_no']] ?? null;
+                if (!$matricNo) {
+                    $skipCount++;
+                    continue;
+                }
+
+                // Check VUG/ prefix
+                if (!str_starts_with(strtoupper($matricNo), 'VUG/')) {
+                    $errorCount++;
+                    continue;
+                }
+
+                // Skip if matric_no exists
+                if (StudentNysc::where('matric_no', $matricNo)->exists()) {
+                    $skipCount++;
+                    continue;
+                }
+
+                $studentData = [
+                    'nysc_session_id' => $sessionId,
+                    'is_submitted'    => true,
+                    'is_paid'         => false,
+                ];
+
+                foreach ($headerIndices as $key => $index) {
+                    $val = $row[$index] ?? null;
+                    if ($val === '') $val = null;
+                    
+                    // Handle booleans
+                    if ($key === 'is_status') {
+                        $val = ($row[$index] === null || $row[$index] === '') ? true : filter_var($val, FILTER_VALIDATE_BOOLEAN);
+                    } elseif ($key === 'is_military') {
+                        $val = filter_var($val, FILTER_VALIDATE_BOOLEAN);
+                    } elseif ($key === 'gender' || $key === 'marital_status') {
+                        $val = $val ? strtolower(trim($val)) : $val;
+                    }
+                    
+                    $studentData[$key] = $val;
+                }
+
+                StudentNysc::create($studentData);
+                $successCount++;
+            } catch (\Exception $e) {
+                $errorCount++;
+            }
+        }
+
+        return response()->json([
+            'message' => "Bulk upload completed. Success: $successCount, Skipped: $skipCount, Failed: $errorCount",
+            'stats' => [
+                'success' => $successCount,
+                'skipped' => $skipCount,
+                'failed' => $errorCount
+            ]
+        ]);
+    }
+
+    /**
      * Update a student's NYSC record
      *
      * @param  \Illuminate\Http\Request  $request
@@ -224,6 +436,9 @@ class NyscAdminController extends Controller
      */
     public function updateStudent(Request $request, $studentId): \Illuminate\Http\JsonResponse
     {
+        if ($request->has('gender')) $request->merge(['gender' => strtolower($request->gender)]);
+        if ($request->has('marital_status')) $request->merge(['marital_status' => strtolower($request->marital_status)]);
+
         // Try to find by direct StudentNysc ID first if passed in request, else by student_id
         $id = $request->input('id');
         if ($id) {
@@ -275,8 +490,30 @@ class NyscAdminController extends Controller
             if ($activeSessionId) { $sessionId = $activeSessionId; }
         }
         if ($sessionId) { $validated['nysc_session_id'] = $sessionId; }
+        // Get original data before update
+        $oldData = $nysc->getOriginal();
+
         // Update the record
         $nysc->update($validated);
+
+        // Track changes if any
+        $changes = $nysc->getChanges();
+        if (!empty($changes)) {
+            unset($changes['updated_at']);
+            
+            if (!empty($changes)) {
+                $changedKeys = array_keys($changes);
+                $oldDataFiltered = array_intersect_key($oldData, array_flip($changedKeys));
+                
+                \App\Models\NyscDataEditHistory::create([
+                    'student_nysc_id' => $nysc->id,
+                    'admin_id' => auth()->check() && auth()->user() ? auth()->user()->id : null,
+                    'nysc_session_id' => $validated['nysc_session_id'] ?? $nysc->nysc_session_id,
+                    'old_data' => $oldDataFiltered,
+                    'new_data' => $changes,
+                ]);
+            }
+        }
 
         return response()->json([
             'message' => 'Student record updated successfully.',
@@ -2909,9 +3146,15 @@ class NyscAdminController extends Controller
                 $query->where(function($q) use ($search) {
                     $q->where('fname', 'like', "%{$search}%")
                       ->orWhere('lname', 'like', "%{$search}%")
+                      ->orWhere('mname', 'like', "%{$search}%")
                       ->orWhere('matric_no', 'like', "%{$search}%")
                       ->orWhere('email', 'like', "%{$search}%")
-                      ->orWhere('department', 'like', "%{$search}%");
+                      ->orWhere('department', 'like', "%{$search}%")
+                      ->orWhere('jamb_no', 'like', "%{$search}%")
+                      ->orWhere('state', 'like', "%{$search}%")
+                      ->orWhere('phone', 'like', "%{$search}%")
+                      ->orWhere('course_study', 'like', "%{$search}%")
+                      ->orWhere('gender', 'like', "%{$search}%");
                 });
             }
 
@@ -2937,7 +3180,7 @@ class NyscAdminController extends Controller
             }
 
             // Sorting
-            $sortBy = $request->get('sort_by', 'created_at');
+            $sortBy = $request->get('sort_by', 'updated_at'); // Default sort by updated_at descending
             $sortOrder = $request->get('sort_order', 'desc');
             $query->orderBy($sortBy, $sortOrder);
 
@@ -2951,14 +3194,25 @@ class NyscAdminController extends Controller
                     'id' => $student->id,
                     'student_id' => $student->student_id,
                     'name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
+                    'fname' => $student->fname,
+                    'lname' => $student->lname,
+                    'mname' => $student->mname,
+                    'state' => $student->state,
                     'matric_no' => $student->matric_no,
                     'email' => $student->email,
                     'phone' => $student->phone,
                     'gender' => $student->gender,
+                    'dob' => $student->dob,
+                    'marital_status' => $student->marital_status,
+                    'jamb_no' => $student->jamb_no,
+                    'is_military' => $student->is_military,
+                    'is_status' => $student->is_status,
                     'department' => $student->department,
                     'course_study' => $student->course_study,
+                    'study_mode' => $student->study_mode,
                     'level' => $student->level,
                     'cgpa' => $student->cgpa,
+                    'class_of_degree' => $student->class_of_degree,
                     'graduation_year' => $student->graduation_year,
                     'is_paid' => $student->is_paid,
                     'is_submitted' => $student->is_submitted,
@@ -2979,6 +3233,59 @@ class NyscAdminController extends Controller
                 'message' => 'Failed to fetch students data',
                 'error' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Export students data to Excel
+     */
+    public function exportStudentsData(Request $request)
+    {
+        try {
+            $query = StudentNysc::query();
+
+            // Search functionality
+            if ($request->has('search') && $request->search) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('fname', 'like', "%{$search}%")
+                      ->orWhere('lname', 'like', "%{$search}%")
+                      ->orWhere('mname', 'like', "%{$search}%")
+                      ->orWhere('matric_no', 'like', "%{$search}%")
+                      ->orWhere('department', 'like', "%{$search}%")
+                      ->orWhere('course_study', 'like', "%{$search}%");
+                });
+            }
+
+            // Time filtering
+            $range = $request->get('range', 'all');
+            if ($range === 'weekly') {
+                $query->where('created_at', '>=', now()->startOfWeek());
+            } elseif ($range === 'monthly') {
+                $query->where('created_at', '>=', now()->startOfMonth());
+            }
+
+            // Filters
+            if ($request->has('department') && $request->department) {
+                $query->where('department', $request->department);
+            }
+            if ($request->has('is_paid')) {
+                $query->where('is_paid', $request->boolean('is_paid'));
+            }
+
+            // Sorting
+            $sortBy = $request->get('sort_by', 'updated_at');
+            $sortOrder = $request->get('sort_order', 'desc');
+            $query->orderBy($sortBy, $sortOrder);
+
+            $students = $query->get();
+
+            return \Maatwebsite\Excel\Facades\Excel::download(
+                new \App\Exports\NyscDataExport($students), 
+                'nysc_students_data_' . $range . '_' . date('Y-m-d') . '.xlsx'
+            );
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Export failed: ' . $e->getMessage()], 500);
         }
     }
 
@@ -4655,6 +4962,139 @@ class NyscAdminController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete submission: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all academic sessions from vua_sessions
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getVuaSessions(): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $sessions = VuaSession::orderBy('session', 'desc')->get();
+            return response()->json([
+                'success' => true,
+                'sessions' => $sessions
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch academic sessions',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Search for student documents by matric number
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function searchStudentDocuments(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $matricNo = $request->query('matric_no');
+            
+            if (!$matricNo) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Matric number is required'
+                ], 400);
+            }
+
+            // Search in temporary submissions first (most recent)
+            $submission = \App\Models\NyscTempSubmission::where('matric_no', $matricNo)
+                ->orderBy('created_at', 'desc')
+                ->first();
+
+            // Then search in finalized nysc table
+            $studentNysc = \App\Models\StudentNysc::where('matric_no', $matricNo)->first();
+
+            $documents = [];
+
+            // Helper to get public URL
+            $getPublicUrl = function($path) {
+                if (!$path) return null;
+                return asset('storage/' . str_replace('public/', '', $path));
+            };
+
+            // Extract documents from temp submission
+            if ($submission) {
+                if ($submission->nin_slip) {
+                    $documents['nin_slip'] = [
+                        'name' => 'NIN Slip',
+                        'url' => $getPublicUrl($submission->nin_slip),
+                        'path' => $submission->nin_slip,
+                        'source' => 'Temporary Submission',
+                        'uploaded_at' => $submission->updated_at
+                    ];
+                }
+                
+                if ($submission->jamb_admission_letter) {
+                    $documents['jamb_admission_letter'] = [
+                        'name' => 'JAMB Admission Letter',
+                        'url' => $getPublicUrl($submission->jamb_admission_letter),
+                        'path' => $submission->jamb_admission_letter,
+                        'source' => 'Temporary Submission',
+                        'uploaded_at' => $submission->updated_at
+                    ];
+                }
+            }
+
+            // Extract documents from finalized record (override temp if exists)
+            if ($studentNysc) {
+                if ($studentNysc->nin_slip) {
+                    $documents['nin_slip'] = [
+                        'name' => 'NIN Slip',
+                        'url' => $getPublicUrl($studentNysc->nin_slip),
+                        'path' => $studentNysc->nin_slip,
+                        'source' => 'Final Record',
+                        'uploaded_at' => $studentNysc->updated_at
+                    ];
+                }
+                
+                if ($studentNysc->jamb_admission_letter) {
+                    $documents['jamb_admission_letter'] = [
+                        'name' => 'JAMB Admission Letter',
+                        'url' => $getPublicUrl($studentNysc->jamb_admission_letter),
+                        'path' => $studentNysc->jamb_admission_letter,
+                        'source' => 'Final Record',
+                        'uploaded_at' => $studentNysc->updated_at
+                    ];
+                }
+            }
+
+            // Check if student exists at all
+            if (!$submission && !$studentNysc) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Student record not found',
+                    'documents' => []
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => empty($documents) ? 'No documents found for this student' : 'Documents retrieved successfully',
+                'student' => [
+                    'matric_no' => $matricNo,
+                    'name' => $studentNysc 
+                        ? trim("{$studentNysc->fname} {$studentNysc->mname} {$studentNysc->lname}")
+                        : ($submission ? trim("{$submission->fname} {$submission->mname} {$submission->lname}") : 'Unknown')
+                ],
+                'documents' => array_values($documents)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching student documents: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch student documents',
+                'error' => $e->getMessage()
             ], 500);
         }
     }

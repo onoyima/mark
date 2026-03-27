@@ -69,7 +69,6 @@ class NyscStudentController extends Controller
             'state' => $handleNull($student->state->name ?? null),
             'lga' => $handleNull($student->lga_name),
             'city' => $handleNull($student->city),
-            'religion' => $handleNull($student->religion),
             'marital_status' => $handleNull($student->marital_status),
             'address' => $handleNull($student->address),
             'phone' => $handleNull($student->phone),
@@ -85,7 +84,7 @@ class NyscStudentController extends Controller
             'jamb_no' => $handleNull($academic->jamb_no ?? null),
             'study_mode_id' => $handleNull($academic->study_mode_id ?? null),
             'study_mode' => $handleNull($academic->studyMode->mode ?? null),
-            'graduation_year' => $handleNull(null),
+            'graduation_year' => $handleNull($academic->academicSession->session ?? null),
             'cgpa' => $handleNull(null),
         ],
         'nysc' => $tempSubmission ? [
@@ -101,7 +100,11 @@ class NyscStudentController extends Controller
             'course_of_study' => $tempSubmission->course_study,
             'jamb_no' => $tempSubmission->jamb_no,
             'study_mode' => $tempSubmission->study_mode,
-            'is_temp_submission' => true
+            'is_temp_submission' => true,
+            'nin_slip' => $tempSubmission->nin_slip,
+            'jamb_admission_letter' => $tempSubmission->jamb_admission_letter,
+            'graduation_year' => $tempSubmission->graduation_year,
+            'cgpa' => $tempSubmission->cgpa
         ] : ($nysc ? [
             'fname' => $nysc->fname,
             'lname' => $nysc->lname,
@@ -114,13 +117,16 @@ class NyscStudentController extends Controller
             'state' => $nysc->state,
             'lga' => $nysc->lga,
             'is_military' => $nysc->is_military,
-            'religion' => $nysc->religion,
             'submission_token' => $nysc->submission_token,
             'session_id' => '1',
             'nysc_session_id' => 1,
-            'course_of_study' => $nysc->course_of_study,
+            'course_of_study' => $nysc->course_study,
             'jamb_no' => $nysc->jamb_no,
             'study_mode' => $nysc->study_mode,
+            'graduation_year' => $nysc->graduation_year,
+            'cgpa' => $nysc->cgpa,
+            'nin_slip' => $nysc->nin_slip,
+            'jamb_admission_letter' => $nysc->jamb_admission_letter,
             'is_temp_submission' => false
         ] : null),
         'is_submitted' => $isSubmitted,
@@ -202,10 +208,12 @@ class NyscStudentController extends Controller
             'matric_no' => 'required|string|max:50',
             'department' => 'required|string|max:255',
             'level' => 'nullable|string|max:10',
-            'graduation_year' => 'nullable|integer|min:2000|max:2030',
+            'graduation_year' => 'nullable|string|max:100',
             'cgpa' => 'nullable|numeric|min:0|max:5',
-            'jamb_no' => 'required|string|max:20',
+            'jamb_no' => 'required|string|max:50',
             'study_mode' => 'required|string|max:100',
+            'nin_slip' => 'nullable|string|max:255',
+            'jamb_admission_letter' => 'nullable|string|max:255',
         ]);
 
         // Get NYSC record
@@ -273,7 +281,6 @@ class NyscStudentController extends Controller
             'gender' => 'required|in:Male,Female',
             'dob' => 'required|date',
             'marital_status' => 'required|in:Single,Married,Divorced,Widowed',
-            'religion' => 'nullable|string|max:100',
             'phone' => 'required|string|max:20',
             'email' => 'required|email|max:255',
             'address' => 'required|string',
@@ -284,10 +291,14 @@ class NyscStudentController extends Controller
             'department' => 'required|string|max:255',
             'course_study' => 'nullable|string|max:255',
             'level' => 'nullable|string|max:10',
-            'graduation_year' => 'required|integer|min:2000|max:2030',
-            'cgpa' => 'required|numeric|min:0|max:5',
-            'jamb_no' => 'required|string|max:20',
+            'graduation_year' => 'required|string|max:100', // Changed to string for session name
+            'cgpa' => 'nullable|numeric|min:0|max:5', // Now nullable
+            'jamb_no' => 'required|string|max:50',
             'study_mode' => 'required|string|max:100',
+
+            // File uploads
+            'nin_slip' => 'required|file|mimes:pdf,jpeg,png,jpg|max:2048',
+            'jamb_admission_letter' => 'required|file|mimes:pdf,jpeg,png,jpg|max:2048',
 
             // Payment details
             'payment_amount' => 'required|numeric|min:0',
@@ -308,8 +319,26 @@ class NyscStudentController extends Controller
         $tempData = array_diff_key($validated, ['payment_amount' => '']);
         $tempData['student_id'] = $student->id;
         $tempData['nysc_session_id'] = $activeSession->id;
+        $tempData['session_id'] = $sessionId;
         $tempData['submission_token'] = NyscTempSubmission::generateSessionId();
         $tempData['status'] = 'pending';
+
+        // Handle file uploads
+        $matricPrefix = preg_replace('/[^a-zA-Z0-9_-]/', '_', $validated['matric_no']);
+
+        if ($request->hasFile('nin_slip')) {
+            $file = $request->file('nin_slip');
+            $filename = $matricPrefix . '_nin.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('nysc/documents', $filename, 'public');
+            $tempData['nin_slip'] = $path;
+        }
+
+        if ($request->hasFile('jamb_admission_letter')) {
+            $file = $request->file('jamb_admission_letter');
+            $filename = $matricPrefix . '_jamb.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('nysc/documents', $filename, 'public');
+            $tempData['jamb_admission_letter'] = $path;
+        }
 
         // Delete any existing pending submissions for this student
         NyscTempSubmission::where('student_id', $student->id)
@@ -471,14 +500,16 @@ class NyscStudentController extends Controller
                 'course_of_study' => 'sometimes|string|max:255',
                 'courseOfStudy' => 'sometimes|string|max:255', // Alternative field name
                 'department' => 'sometimes|string|max:255',
-                'graduation_year' => 'sometimes|integer|min:1900|max:' . (date('Y') + 10),
-                'graduationYear' => 'sometimes|integer|min:1900|max:' . (date('Y') + 10), // Alternative field name
+                'graduation_year' => 'sometimes|string|max:100',
+                'graduationYear' => 'sometimes|string|max:100', // Alternative field name
                 'cgpa' => 'sometimes|numeric|min:0|max:5',
                 'jamb_no' => 'sometimes|string|max:50|nullable',
                 'jambNumber' => 'sometimes|string|max:50|nullable', // Alternative field name
                 'study_mode' => 'sometimes|string|max:100',
                 'studyMode' => 'sometimes|string|max:100', // Alternative field name
                 'level' => 'sometimes|string|max:10|nullable',
+                'nin_slip' => 'sometimes|string|max:255|nullable',
+                'jamb_admission_letter' => 'sometimes|string|max:255|nullable',
 
                 // Emergency Contact
                 'emergency_contact_name' => 'sometimes|string|max:255|nullable',

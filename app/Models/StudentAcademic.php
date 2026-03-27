@@ -68,7 +68,15 @@ class StudentAcademic extends Model
     }
 
     public function courseStudy()
-{
-    return $this->belongsTo(CourseStudy::class, 'course_study_id');
-}
+    {
+        return $this->belongsTo(CourseStudy::class, 'course_study_id');
+    }
+
+    /**
+     * Get the academic session.
+     */
+    public function academicSession()
+    {
+        return $this->belongsTo(VuaSession::class, 'academic_session_id');
+    }
 }

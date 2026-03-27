@@ -53,6 +53,9 @@ Route::prefix('nysc')->group(function () {
     
     // Temporary test endpoint for pending payments (no auth)
     Route::get('test-pending-payments', [NyscAdminController::class, 'getPendingPaymentsStats']);
+    
+    // Academic sessions route
+    Route::get('vua-sessions', [NyscAdminController::class, 'getVuaSessions']);
 
     // ✅ Admin routes (with admin token ability)
     Route::prefix('admin')->middleware(['auth:sanctum'])->group(function () {
@@ -71,7 +74,14 @@ Route::prefix('nysc')->group(function () {
         Route::put('settings', [NyscAdminController::class, 'updateSettings']);
         Route::get('students', [NyscAdminController::class, 'getStudents']);
         Route::get('students-data', [NyscAdminController::class, 'getStudentsData']);
-        Route::put('student/{studentId}', [NyscAdminController::class, 'updateStudent']);
+        Route::get('students-export', [NyscAdminController::class, 'exportStudentsData']);
+        Route::post('/student', [NyscAdminController::class, 'createStudent']);
+        
+        // Bulk Student Upload Routes
+        Route::get('/student/template', [NyscAdminController::class, 'downloadStudentTemplate']);
+        Route::post('/student/bulk-upload', [NyscAdminController::class, 'bulkUploadStudents']);
+
+        Route::put('/student/{student_id}', [NyscAdminController::class, 'updateStudent']);
         Route::delete('student/{id}', [NyscAdminController::class, 'deleteStudent']);
         Route::get('exports/{format}', [NyscAdminController::class, 'export']);
         Route::get('export-students/{format}', [NyscAdminController::class, 'exportStudents']);
@@ -98,6 +108,7 @@ Route::prefix('nysc')->group(function () {
         // Student management routes
         Route::get('students/all', [NyscAdminController::class, 'getAllStudents']);
         Route::get('students/stats', [NyscAdminController::class, 'getStudentStats']);
+        Route::get('students/search-documents', [NyscAdminController::class, 'searchStudentDocuments']);
         Route::get('students/{studentId}', [NyscAdminController::class, 'getStudentDetails']);
         Route::get('students/export', [NyscAdminController::class, 'exportStudents']);
         

@@ -40,6 +40,14 @@ class StudentNysc extends Model
         'class_of_degree',
         'jamb_no',
         'study_mode',
+        'nin_slip',
+        'jamb_admission_letter',
+        'is_military',
+        'is_status',
+    ];
+
+    protected $attributes = [
+        'is_status' => true,
     ];
 
     protected $casts = [
@@ -48,6 +56,8 @@ class StudentNysc extends Model
         'dob' => 'date',
         'submitted_at' => 'datetime',
         'cgpa' => 'decimal:2',
+        'is_military' => 'boolean',
+        'is_status' => 'boolean',
     ];
 
     public function student()

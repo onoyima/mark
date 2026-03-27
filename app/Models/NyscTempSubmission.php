@@ -15,6 +15,7 @@ class NyscTempSubmission extends Model
     protected $fillable = [
         'student_id',
         'nysc_session_id',
+        'session_id',
         'submission_token',
         'fname',
         'lname',
@@ -36,15 +37,15 @@ class NyscTempSubmission extends Model
         'cgpa',
         'jamb_no',
         'study_mode',
-        'religion',
         'status',
+        'nin_slip',
+        'jamb_admission_letter',
         'expires_at',
     ];
 
     protected $casts = [
         'dob' => 'date',
         'cgpa' => 'decimal:2',
-        'graduation_year' => 'integer',
         'expires_at' => 'datetime',
     ];
 
@@ -123,7 +124,7 @@ class NyscTempSubmission extends Model
 
         // Remove fields that don't belong in student_nysc table
         unset($data['id'], $data['nysc_session_id'], $data['submission_token'], $data['status'], $data['expires_at'],
-              $data['created_at'], $data['updated_at']);
+              $data['created_at'], $data['updated_at'], $data['payment_amount']);
 
         // Add submission tracking fields
         $data['is_submitted'] = true;
