@@ -101,7 +101,6 @@ class NyscPaymentController extends Controller
                     'amount' => $amount,
                     'status' => 'pending',
                     'payment_method' => 'paystack',
-                    'submission_token' => $submissionToken,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);

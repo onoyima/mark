@@ -2971,15 +2971,7 @@ class NyscAdminController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $students->items(),
-                'pagination' => [
-                    'current_page' => $students->currentPage(),
-                    'last_page' => $students->lastPage(),
-                    'per_page' => $students->perPage(),
-                    'total' => $students->total(),
-                    'from' => $students->firstItem(),
-                    'to' => $students->lastItem(),
-                ]
+                'data' => $students
             ]);
         } catch (\Exception $e) {
             return response()->json([
