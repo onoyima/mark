@@ -36,6 +36,7 @@ class NyscTempSubmission extends Model
         'cgpa',
         'jamb_no',
         'study_mode',
+        'religion',
         'status',
         'expires_at',
     ];
