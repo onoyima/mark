@@ -4919,6 +4919,138 @@ class NyscAdminController extends Controller
     }
 
     /**
+     * Get student graduate records for Nerd page
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getNerdStudents(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $query = \DB::table('student_nysc')
+                ->leftJoin('student_academics', 'student_nysc.student_id', '=', 'student_academics.student_id')
+                ->leftJoin('faculties', 'student_academics.faculty_id', '=', 'faculties.id')
+                ->leftJoin('departments', 'student_academics.department_id', '=', 'departments.id')
+                ->leftJoin('entry_modes', 'student_academics.entry_mode_id', '=', 'entry_modes.id')
+                ->select(
+                    'student_nysc.nin',
+                    'student_nysc.matric_no',
+                    'student_nysc.email as student_email',
+                    'student_nysc.phone as phone_number',
+                    'student_nysc.fname as first_name',
+                    'student_nysc.mname as middle_name',
+                    'student_nysc.lname as surname',
+                    'student_nysc.gender as sex',
+                    'student_nysc.dob as date_of_birth',
+                    'student_nysc.state',
+                    'student_nysc.course_study as programme_major',
+                    'student_nysc.class_of_degree as class_of_degree_text',
+                    'student_nysc.cgpa as final_cgpa',
+                    'student_nysc.graduation_year as graduation_session',
+                    'student_nysc.study_mode as programme_type',
+                    'student_nysc.department as department_name',
+                    'student_academics.admitted_date as admission_date',
+                    'faculties.name as faculty_name',
+                    'departments.name as department_from_academics',
+                    'entry_modes.mode as mode_of_entry_name'
+                );
+
+            // Search
+            if ($request->has('search') && $request->search) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('student_nysc.matric_no', 'like', "%{$search}%")
+                      ->orWhere('student_nysc.fname', 'like', "%{$search}%")
+                      ->orWhere('student_nysc.lname', 'like', "%{$search}%")
+                      ->orWhere('student_nysc.nin', 'like', "%{$search}%")
+                      ->orWhere('student_nysc.department', 'like', "%{$search}%");
+                });
+            }
+
+            $students = $query->orderBy('student_nysc.id', 'desc')->get();
+
+            // Calculate CGPA from course_regs for all students
+            $studentIds = $students->pluck('matric_no')->filter()->values()->toArray();
+            $cgpaMap = [];
+            if (!empty($studentIds)) {
+                $cgpaResults = \DB::table('course_regs')
+                    ->join('courses', 'course_regs.course_id', '=', 'courses.id')
+                    ->join('student_nysc', 'course_regs.student_id', '=', 'student_nysc.student_id')
+                    ->whereIn('student_nysc.matric_no', $studentIds)
+                    ->whereIn('course_regs.grade', ['A', 'B', 'C', 'D', 'F'])
+                    ->where('courses.credit_load', '>', 0)
+                    ->select(
+                        'student_nysc.matric_no',
+                        \DB::raw('SUM(CASE course_regs.grade
+                            WHEN "A" THEN 5 * courses.credit_load
+                            WHEN "B" THEN 4 * courses.credit_load
+                            WHEN "C" THEN 3 * courses.credit_load
+                            WHEN "D" THEN 2 * courses.credit_load
+                            WHEN "F" THEN 0 * courses.credit_load
+                        END) as total_quality_points'),
+                        \DB::raw('SUM(courses.credit_load) as total_credits')
+                    )
+                    ->groupBy('student_nysc.matric_no')
+                    ->get();
+
+                foreach ($cgpaResults as $row) {
+                    if ($row->total_credits > 0) {
+                        $cgpaMap[$row->matric_no] = round($row->total_quality_points / $row->total_credits, 2);
+                    }
+                }
+            }
+
+            $records = $students->map(function ($s) use ($cgpaMap) {
+                $calculatedCgpa = $cgpaMap[$s->matric_no] ?? $s->final_cgpa;
+                return [
+                    'nin' => $s->nin,
+                    'matric_no' => $s->matric_no,
+                    'student_email' => $s->student_email,
+                    'phone_number' => $s->phone_number,
+                    'first_name' => $s->first_name,
+                    'middle_name' => $s->middle_name,
+                    'surname' => $s->surname,
+                    'sex' => $s->sex,
+                    'date_of_birth' => $s->date_of_birth,
+                    'state' => $s->state,
+                    'programme_major' => $s->programme_major,
+                    'award_title' => null,
+                    'award_short_title' => null,
+                    'programme_award_combined' => null,
+                    'programme_category' => null,
+                    'programme_type' => $s->programme_type,
+                    'class_of_degree_text' => $s->class_of_degree_text,
+                    'final_cgpa' => $calculatedCgpa,
+                    'graduation_session' => $s->graduation_session,
+                    'graduation_date' => null,
+                    'grade_approval_date' => null,
+                    'admission_date' => $s->admission_date,
+                    'mode_of_entry' => $s->mode_of_entry_name,
+                    'faculty_name' => $s->faculty_name,
+                    'department_name' => $s->department_name ?? $s->department_from_academics,
+                    'senate_meeting_ref' => null,
+                    'graduate_list_ref' => null,
+                    'verified_by' => null,
+                    'remarks' => null,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $records,
+                'total' => $records->count(),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Nerd students fetch error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch nerd data',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Delete a student's NYSC record
      *
      * @param int $id

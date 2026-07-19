@@ -135,6 +135,9 @@ Route::prefix('nysc')->group(function () {
         
         // Duplicate payments management
         Route::get('duplicate-payments', [NyscDuplicatePaymentController::class, 'getDuplicatePayments']);
+
+        // Nerd student records
+        Route::get('nerd-students', [NyscAdminController::class, 'getNerdStudents']);
         
         // CSV upload and additional settings routes
         Route::post('upload-csv', [NyscAdminController::class, 'uploadCsv']);
