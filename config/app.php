@@ -54,7 +54,20 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
-    'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
+    /*
+    |--------------------------------------------------------------------------
+    | Frontend URLs
+    |--------------------------------------------------------------------------
+    |
+    | Comma-separated list of allowed frontend origins (used for CORS and
+    | Paystack redirect callbacks). Example:
+    | FRONTEND_URL=https://app.example.com,https://staging.example.com,http://localhost:3000
+    |
+    */
+
+    'frontend_urls' => array_values(array_filter(array_map('trim', explode(',', env('FRONTEND_URL', 'http://localhost:3000'))))),
+
+    'frontend_url' => (array_values(array_filter(array_map('trim', explode(',', env('FRONTEND_URL', 'http://localhost:3000'))))) ?? [])[0] ?? 'http://localhost:3000',
 
     /*
     |--------------------------------------------------------------------------

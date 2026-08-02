@@ -78,8 +78,7 @@ class NyscPaymentController extends Controller
                 'email' => $tempSubmission->email, // Use email from temporary submission
                 'amount' => $amount * 100, // Paystack expects amount in kobo
                 'reference' => $reference,
-                'callback_url' => config('app.frontend_url', 'https://studentupdate.vercel.app') . '/student/payment?status=success&reference=' . $reference,
-                // 'callback_url' => config('app.frontend_url', 'http://localhost:3000') . '/student/payment?status=success&reference=' . $reference,
+                'callback_url' => $this->resolveFrontendCallbackUrl($request, $reference),
                 'metadata' => [
                     'student_id' => $student->id,
                     'submission_token' => $submissionToken,
@@ -123,6 +122,34 @@ class NyscPaymentController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Resolve the frontend URL to redirect the user back to after a Paystack
+     * payment. Uses the Origin header of the initiating request so each
+     * frontend is redirected back to itself. Falls back to the first
+     * FRONTEND_URL when no matching origin is present.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  string  $reference
+     * @return string
+     */
+    protected function resolveFrontendCallbackUrl(Request $request, string $reference): string
+    {
+        $frontends = array_values(array_filter((array) config('app.frontend_urls', [])));
+        $origin = $request->headers->get('Origin');
+        $base = $frontends[0] ?? config('app.frontend_url', 'https://studentupdate.vercel.app');
+
+        if ($origin) {
+            foreach ($frontends as $frontend) {
+                if (strcasecmp(rtrim($frontend, '/'), rtrim($origin, '/')) === 0) {
+                    $base = rtrim($frontend, '/');
+                    break;
+                }
+            }
+        }
+
+        return $base . '/student/payment?status=success&reference=' . $reference;
     }
 
     /**
