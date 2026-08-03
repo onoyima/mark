@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Cache;
 use App\Services\DocxImportService;
 use App\Models\AdminSetting;
 use App\Models\StudentNysc;
+use App\Models\NyscSession;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Str;
 use App\Exports\StudentNyscDataExport;
@@ -358,7 +359,7 @@ class NyscDocxImportController extends Controller
         try {
             Log::info('Starting student data export');
 
-            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $sessionId = $request->input('session_id') ?: ($this->fileSessionId($request->input('file')) ?: AdminSetting::get('active_session_id'));
             
             // Get all student NYSC records with exact table columns
             $query = StudentNysc::select([
@@ -432,15 +433,7 @@ class NyscDocxImportController extends Controller
             
             $storageDir = storage_path('app');
             $requestedFile = $request->query('file');
-            $availableFiles = [];
-            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
-                $availableFiles[] = [
-                    'name' => basename($f),
-                    'size' => $this->formatBytes(filesize($f)),
-                    'modified' => date('Y-m-d H:i:s', filemtime($f))
-                ];
-            }
-            usort($availableFiles, function($a, $b){ return strcmp($a['name'], $b['name']); });
+            $availableFiles = $this->listGraduandsFiles();
             $currentFileName = $requestedFile ?: 'GRADUANDS.docx';
             $currentFilePath = file_exists($storageDir . '/' . $currentFileName) ? ($storageDir . '/' . $currentFileName) : null;
             if (!$currentFilePath && !empty($availableFiles)) {
@@ -513,7 +506,7 @@ class NyscDocxImportController extends Controller
             }
 
             // Get ALL students for comprehensive matching within the session
-            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $sessionId = $this->fileSessionId($currentFileName) ?: ($request->input('session_id') ?: AdminSetting::get('active_session_id'));
             $query = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree']);
             if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
             $allStudents = $query->get();
@@ -636,14 +629,7 @@ class NyscDocxImportController extends Controller
 
             // Attempt to provide context for frontend rendering
             $storageDir = storage_path('app');
-            $availableFiles = [];
-            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
-                $availableFiles[] = [
-                    'name' => basename($f),
-                    'size' => $this->formatBytes(filesize($f)),
-                    'modified' => date('Y-m-d H:i:s', filemtime($f))
-                ];
-            }
+            $availableFiles = $this->listGraduandsFiles();
 
             return response()->json([
                 'success' => false,
@@ -666,6 +652,241 @@ class NyscDocxImportController extends Controller
     }
 
     /**
+     * Upload a GRADUANDS file tied to a specific NYSC session.
+     *
+     * The file is stored in storage/app so it appears in the GRADUANDS*.docx
+     * list. A sidecar JSON (storage/app/graduands_meta.json) records which
+     * session the file belongs to and the graduation date for that session,
+     * without changing the database schema.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function uploadGraduandsFile(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'file' => [
+                    'required',
+                    'file',
+                    'mimetypes:application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/octet-stream',
+                    'max:10240'
+                ],
+                'session_id' => 'required|integer|exists:nysc_sessions,id',
+                'graduation_date' => 'nullable|date'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $file = $request->file('file');
+            $fileName = basename($file->getClientOriginalName());
+
+            if (!preg_match('/\.docx$/i', $fileName)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Graduands files must be .docx files'
+                ], 422);
+            }
+
+            $graduationDate = $request->input('graduation_date');
+            $graduationDateDisplay = null;
+            if ($graduationDate) {
+                $parsed = \DateTime::createFromFormat('Y-m-d', $graduationDate);
+                if (!$parsed) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid graduation date format'
+                    ], 422);
+                }
+                $graduationDateDisplay = $parsed->format('d/m/Y');
+            }
+
+            $targetPath = storage_path('app/' . $fileName);
+            $file->move(storage_path('app'), $fileName);
+
+            $meta = $this->readGraduandsMeta();
+            $meta[$fileName] = [
+                'session_id' => (int) $request->input('session_id'),
+                'graduation_date' => $graduationDateDisplay,
+                'uploaded_at' => now()->toDateTimeString()
+            ];
+            $this->writeGraduandsMeta($meta);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Graduands file uploaded successfully',
+                'file' => [
+                    'name' => $fileName,
+                    'session_id' => (int) $request->input('session_id'),
+                    'session_name' => NyscSession::find((int) $request->input('session_id'))?->name,
+                    'graduation_date' => $graduationDateDisplay,
+                    'size' => $this->formatBytes(filesize($targetPath)),
+                    'modified' => date('Y-m-d H:i:s', filemtime($targetPath))
+                ],
+                'files' => $this->listGraduandsFiles()
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Error uploading graduands file', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error uploading graduands file: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Path of the sidecar JSON that maps graduands files to sessions.
+     *
+     * @return string
+     */
+    private function graduandsMetaPath(): string
+    {
+        return storage_path('app/graduands_meta.json');
+    }
+
+    /**
+     * Read the sidecar JSON as an array.
+     *
+     * @return array
+     */
+    private function readGraduandsMeta(): array
+    {
+        $path = $this->graduandsMetaPath();
+        if (!file_exists($path)) {
+            return [];
+        }
+        $decoded = json_decode(file_get_contents($path), true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Write the sidecar JSON atomically.
+     *
+     * @param array $meta
+     * @return void
+     */
+    private function writeGraduandsMeta(array $meta): void
+    {
+        $path = $this->graduandsMetaPath();
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        $contents = json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $tmp = $path . '.tmp';
+        if (file_put_contents($tmp, $contents) !== false && @rename($tmp, $path)) {
+            return;
+        }
+        @unlink($tmp);
+        file_put_contents($path, $contents);
+    }
+
+    /**
+     * Get the meta entry for a single graduands file (with session name resolved).
+     *
+     * @param string $fileName
+     * @return array
+     */
+    private function graduandsMetaFor(string $fileName): array
+    {
+        $meta = $this->readGraduandsMeta();
+        $entry = $meta[$fileName] ?? [];
+        $entry['session_name'] = null;
+        if (isset($entry['session_id'])) {
+            $session = NyscSession::find($entry['session_id']);
+            $entry['session_name'] = $session ? $session->name : null;
+        }
+        return $entry;
+    }
+
+    /**
+     * Session id a graduands file is tied to, or null when not assigned.
+     *
+     * @param string|null $fileName
+     * @return int|null
+     */
+    private function fileSessionId(?string $fileName): ?int
+    {
+        if (!$fileName) {
+            return null;
+        }
+        $entry = $this->graduandsMetaFor($fileName);
+        return isset($entry['session_id']) ? (int) $entry['session_id'] : null;
+    }
+
+    /**
+     * Graduation date (d/m/Y) a graduands file's session, or null when not set.
+     *
+     * @param string|null $fileName
+     * @return string|null
+     */
+    private function fileGraduationDate(?string $fileName): ?string
+    {
+        if (!$fileName) {
+            return null;
+        }
+        $entry = $this->graduandsMetaFor($fileName);
+        return $entry['graduation_date'] ?? null;
+    }
+
+    /**
+     * List all GRADUANDS*.docx files in storage/app with their session meta.
+     *
+     * @return array
+     */
+    private function listGraduandsFiles(): array
+    {
+        $files = [];
+        foreach (glob(storage_path('app/*.docx')) as $f) {
+            $fileName = basename($f);
+            $meta = $this->graduandsMetaFor($fileName);
+            $files[] = [
+                'name' => $fileName,
+                'size' => $this->formatBytes(filesize($f)),
+                'modified' => date('Y-m-d H:i:s', filemtime($f)),
+                'session_id' => $meta['session_id'] ?? null,
+                'session_name' => $meta['session_name'] ?? null,
+                'graduation_date' => $meta['graduation_date'] ?? null
+            ];
+        }
+        usort($files, function ($a, $b) {
+            return strcmp($a['name'], $b['name']);
+        });
+        return $files;
+    }
+
+    /**
+     * Get the list of graduands files with their session mapping.
+     *
+     * @return JsonResponse
+     */
+    public function getGraduandsFiles(): JsonResponse
+    {
+        try {
+            return response()->json([
+                'success' => true,
+                'files' => $this->listGraduandsFiles()
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error listing graduands files', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error listing graduands files: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Apply approved class of degree updates for students with NULL values
      *
      * @param Request $request
@@ -675,6 +896,7 @@ class NyscDocxImportController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
+                'file' => 'nullable|string',
                 'updates' => 'required|array',
                 'updates.*.student_id' => 'required|integer',
                 'updates.*.matric_no' => 'required|string',
@@ -691,6 +913,7 @@ class NyscDocxImportController extends Controller
             }
 
             $updates = $request->input('updates');
+            $graduationDate = $this->fileGraduationDate($request->input('file'));
             $updatedCount = 0;
             $errorCount = 0;
             $skippedCount = 0;
@@ -736,6 +959,9 @@ class NyscDocxImportController extends Controller
                             ]);
                         } else {
                             $student->class_of_degree = $proposed;
+                            if ($graduationDate !== null) {
+                                $student->graduation_year = $graduationDate;
+                            }
                             $student->save();
                             $updatedCount++;
                             Log::info('Student class_of_degree updated', [
@@ -820,7 +1046,7 @@ class NyscDocxImportController extends Controller
         try {
             Log::info('Starting export of students with NULL class_of_degree');
 
-            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $sessionId = $request->input('session_id') ?: ($this->fileSessionId($request->input('file')) ?: AdminSetting::get('active_session_id'));
 
             // Get students with NULL or empty class_of_degree
             $query = StudentNysc::where(function($query) {
@@ -1089,21 +1315,15 @@ class NyscDocxImportController extends Controller
             $dryRun = filter_var($request->query('dry_run', 'false'), FILTER_VALIDATE_BOOLEAN);
             $storageDir = storage_path('app');
             $requestedFile = $request->query('file');
-            $availableFiles = [];
-            foreach (glob($storageDir . '/GRADUANDS*.docx') as $f) {
-                $availableFiles[] = [
-                    'name' => basename($f),
-                    'size' => $this->formatBytes(filesize($f)),
-                    'modified' => date('Y-m-d H:i:s', filemtime($f))
-                ];
-            }
-            usort($availableFiles, function($a, $b){ return strcmp($a['name'], $b['name']); });
+            $availableFiles = $this->listGraduandsFiles();
             $currentFileName = $requestedFile ?: 'GRADUANDS.docx';
             $currentFilePath = file_exists($storageDir . '/' . $currentFileName) ? ($storageDir . '/' . $currentFileName) : null;
             if (!$currentFilePath && !empty($availableFiles)) {
                 $currentFileName = $availableFiles[0]['name'];
                 $currentFilePath = $storageDir . '/' . $currentFileName;
             }
+            $fileSessionId = $this->fileSessionId($currentFileName);
+            $graduationDate = $this->fileGraduationDate($currentFileName);
             if (!$currentFilePath) {
                 return response()->json([
                     'success' => false,
@@ -1132,7 +1352,7 @@ class NyscDocxImportController extends Controller
 
             $review = $process['review_data'] ?? [];
 
-            $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+            $sessionId = $fileSessionId ?: ($request->input('session_id') ?: AdminSetting::get('active_session_id'));
             $query = StudentNysc::select(['id','matric_no','fname','mname','lname','class_of_degree']);
             if ($sessionId) { $query->where('nysc_session_id', $sessionId); }
             $students = $query->get();
@@ -1195,6 +1415,9 @@ class NyscDocxImportController extends Controller
                             $target = $value ?? ($tieMap[$mat] ?? null);
                             if ($target === null) { continue; }
                             $student->class_of_degree = $target;
+                            if ($graduationDate !== null) {
+                                $student->graduation_year = $graduationDate;
+                            }
                             $student->save();
                             $updated_to_docx++;
                         }
@@ -1289,6 +1512,9 @@ class NyscDocxImportController extends Controller
                             if ($dbHasValue && strcasecmp(trim($dbDegree), trim($docxDegree)) === 0) { $kept_ok++; }
                             else {
                                 $s->class_of_degree = $docxDegree;
+                                if ($graduationDate !== null) {
+                                    $s->graduation_year = $graduationDate;
+                                }
                                 $s->save();
                                 $updated_to_docx++;
                             }

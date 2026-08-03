@@ -13,6 +13,7 @@ use Illuminate\Support\Str;
 class DocxImportService
 {
     protected $tempStoragePath;
+    protected $extractionCachePath;
     protected $validClassOfDegree = [
         'First Class',
         'Second Class Upper',
@@ -24,10 +25,16 @@ class DocxImportService
     public function __construct()
     {
         $this->tempStoragePath = storage_path('app/temp/docx_imports');
+        $this->extractionCachePath = storage_path('app/graduands_cache');
         
         // Ensure temp directory exists
         if (!file_exists($this->tempStoragePath)) {
             mkdir($this->tempStoragePath, 0755, true);
+        }
+
+        // Ensure extraction cache directory exists
+        if (!file_exists($this->extractionCachePath)) {
+            mkdir($this->extractionCachePath, 0755, true);
         }
     }
 
@@ -111,6 +118,13 @@ class DocxImportService
             if (!is_readable($filePath)) {
                 throw new \Exception("File is not readable: {$filePath}");
             }
+
+            // Serve from cache when the source file has not changed
+            $cached = $this->readExtractionCache($filePath);
+            if ($cached !== null) {
+                Log::info('DOCX extraction served from cache', ['file_path' => $filePath, 'extracted_count' => count($cached)]);
+                return $cached;
+            }
             
             // Load the DOCX file
             $phpWord = IOFactory::load($filePath);
@@ -149,6 +163,8 @@ class DocxImportService
             
             // Remove duplicates based on matric_no
             $extractedData = $this->removeDuplicateRecords($extractedData);
+
+            $this->storeExtractionCache($filePath, $extractedData);
             
             Log::info('Comprehensive data extraction completed', [
                 'total_sections' => $sectionCount,
@@ -165,6 +181,53 @@ class DocxImportService
         }
         
         return $extractedData;
+    }
+
+    /**
+     * Cache key for a DOCX file, incorporating its modification time so the
+     * cache is invalidated automatically whenever the file is replaced.
+     */
+    protected function extractionCacheKey(string $filePath): string
+    {
+        $signature = md5(realpath($filePath) . '|' . @filemtime($filePath) . '|' . @filesize($filePath));
+        return $this->extractionCachePath . '/' . $signature . '.json';
+    }
+
+    /**
+     * Read the cached extraction result for a DOCX file, or null if absent.
+     */
+    protected function readExtractionCache(string $filePath): ?array
+    {
+        $cacheFile = $this->extractionCacheKey($filePath);
+
+        if (!file_exists($cacheFile)) {
+            return null;
+        }
+
+        $contents = @file_get_contents($cacheFile);
+        if ($contents === false) {
+            return null;
+        }
+
+        $decoded = json_decode($contents, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Persist the extraction result for a DOCX file.
+     */
+    protected function storeExtractionCache(string $filePath, array $data): void
+    {
+        try {
+            $cacheFile = $this->extractionCacheKey($filePath);
+            @file_put_contents($cacheFile, json_encode($data, JSON_UNESCAPED_UNICODE), LOCK_EX);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to write extraction cache', ['error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -569,17 +632,21 @@ class DocxImportService
     {
         $allData = [];
         $matchedCount = 0;
-        
+
+        // Load all students once into memory to avoid per-record queries
+        $students = StudentNysc::select(['id', 'matric_no', 'fname', 'mname', 'lname', 'class_of_degree'])->get();
+        $exactLookup = $this->buildExactLookup($students);
+
         // Get all student matric numbers for fuzzy matching (normalized)
-        $allDbMatrics = StudentNysc::pluck('matric_no')->map(function($matric) {
-            return strtoupper(trim(preg_replace('/\s+/', '', $matric)));
+        $allDbMatrics = $students->map(function($student) {
+            return strtoupper(trim(preg_replace('/\s+/', '', $student->matric_no)));
         })->toArray();
         
         foreach ($extractedData as $data) {
             $matricNo = $data['matric_no'];
             
-            // Try multiple variations for exact matching
-            $student = $this->findExactMatch($matricNo);
+            // Try multiple variations for exact matching (in-memory)
+            $student = $this->exactLookup($matricNo, $exactLookup);
             
             if ($student) {
                 // Exact match found
@@ -609,7 +676,7 @@ class DocxImportService
                 
                 if ($similarMatric) {
                     // Find the student with the similar matric (need to reverse lookup since we normalized)
-                    $similarStudent = StudentNysc::whereRaw('UPPER(TRIM(REPLACE(matric_no, " ", ""))) = ?', [$similarMatric])->first();
+                    $similarStudent = $exactLookup['normalized:' . $similarMatric] ?? null;
                     
                     if ($similarStudent) {
                         // Similar match found
@@ -774,29 +841,7 @@ class DocxImportService
      */
     private function findExactMatch(string $matricNo): ?StudentNysc
     {
-        // Create variations of the matric number to try
-        $variations = [
-            $matricNo,                                    // Original
-            strtoupper($matricNo),                       // Upper case
-            strtolower($matricNo),                       // Lower case
-            trim($matricNo),                             // Trimmed
-            strtoupper(trim($matricNo)),                 // Upper case + trimmed
-            preg_replace('/\s+/', '', $matricNo),        // Remove all spaces
-            strtoupper(preg_replace('/\s+/', '', $matricNo)), // Upper case + no spaces
-            preg_replace('/\s+/', ' ', trim($matricNo)), // Normalize spaces
-            strtoupper(preg_replace('/\s+/', ' ', trim($matricNo))), // Upper + normalized spaces
-        ];
-        
-        // Also handle spaces before the last digits (e.g., "VUG/CSC/21/ 5732" -> "VUG/CSC/21/5732")
-        $spaceBeforeDigits = preg_replace('/\/\s+(\d+)$/', '/$1', $matricNo);
-        if ($spaceBeforeDigits !== $matricNo) {
-            $variations[] = $spaceBeforeDigits;
-            $variations[] = strtoupper($spaceBeforeDigits);
-            $variations[] = strtolower($spaceBeforeDigits);
-        }
-        
-        // Remove duplicates
-        $variations = array_unique($variations);
+        $variations = $this->matricVariations($matricNo);
         
         // Try each variation
         foreach ($variations as $variation) {
@@ -826,6 +871,70 @@ class DocxImportService
         }
         
         return null;
+    }
+
+    /**
+     * Build the list of matric number variations used for exact matching.
+     * Kept in one place so the in-memory lookup mirrors the DB search exactly.
+     */
+    private function matricVariations(string $matricNo): array
+    {
+        $variations = [
+            $matricNo,                                    // Original
+            strtoupper($matricNo),                       // Upper case
+            strtolower($matricNo),                       // Lower case
+            trim($matricNo),                             // Trimmed
+            strtoupper(trim($matricNo)),                 // Upper case + trimmed
+            preg_replace('/\s+/', '', $matricNo),        // Remove all spaces
+            strtoupper(preg_replace('/\s+/', '', $matricNo)), // Upper case + no spaces
+            preg_replace('/\s+/', ' ', trim($matricNo)), // Normalize spaces
+            strtoupper(preg_replace('/\s+/', ' ', trim($matricNo))), // Upper + normalized spaces
+        ];
+        
+        // Also handle spaces before the last digits (e.g., "VUG/CSC/21/ 5732" -> "VUG/CSC/21/5732")
+        $spaceBeforeDigits = preg_replace('/\/\s+(\d+)$/', '/$1', $matricNo);
+        if ($spaceBeforeDigits !== $matricNo) {
+            $variations[] = $spaceBeforeDigits;
+            $variations[] = strtoupper($spaceBeforeDigits);
+            $variations[] = strtolower($spaceBeforeDigits);
+        }
+        
+        return array_unique($variations);
+    }
+
+    /**
+     * In-memory equivalent of findExactMatch using a pre-built lookup map.
+     * Keys use the same variations as findExactMatch; "normalized:" keys back
+     * the case-insensitive fallback. First student wins, matching DB ordering.
+     */
+    private function exactLookup(string $matricNo, array $lookup): ?StudentNysc
+    {
+        foreach ($this->matricVariations($matricNo) as $variation) {
+            if (isset($lookup[$variation])) {
+                return $lookup[$variation];
+            }
+        }
+        return $lookup['normalized:' . strtoupper(trim(preg_replace('/\s+/', '', $matricNo)))] ?? null;
+    }
+
+    /**
+     * Build the in-memory exact-match lookup map from a student collection.
+     */
+    private function buildExactLookup(iterable $students): array
+    {
+        $lookup = [];
+        foreach ($students as $student) {
+            foreach ($this->matricVariations($student->matric_no) as $variation) {
+                if (!isset($lookup[$variation])) {
+                    $lookup[$variation] = $student;
+                }
+            }
+            $normalized = strtoupper(trim(preg_replace('/\s+/', '', $student->matric_no)));
+            if (!isset($lookup['normalized:' . $normalized])) {
+                $lookup['normalized:' . $normalized] = $student;
+            }
+        }
+        return $lookup;
     }
 
     /**
