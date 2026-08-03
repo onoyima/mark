@@ -2097,18 +2097,55 @@ class NyscAdminController extends Controller
     public function updateSubmissionStatus(Request $request, string $submissionId): \Illuminate\Http\JsonResponse
     {
         try {
-            $submission = \App\Models\NyscTempSubmission::findOrFail($submissionId);
+            $submission = NyscTempSubmission::findOrFail($submissionId);
+            $status = $request->status;
 
-            $submission->update([
-                'status' => $request->status,
-                'review_notes' => $request->notes,
-                'reviewed_by' => auth()->id(),
-                'reviewed_at' => now(),
-            ]);
+            if (!in_array($status, ['approved', 'rejected'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid status. Expected approved or rejected.'
+                ], 422);
+            }
+
+            $message = 'Submission status updated successfully';
+            $nyscRecord = null;
+
+            // When approved, move the submitted data into the master submissions
+            // list (student_nysc). This is an additional path only - the existing
+            // student payment flow is left completely untouched.
+            if ($status === 'approved') {
+                $hasSuccessfulPayment = NyscPayment::where('student_id', $submission->student_id)
+                    ->where('status', 'successful')
+                    ->exists();
+
+                $nyscRecord = StudentNysc::updateOrCreate(
+                    ['student_id' => $submission->student_id],
+                    array_merge($submission->toStudentNyscData(), [
+                        'is_paid' => $hasSuccessfulPayment,
+                        'is_submitted' => true,
+                        'nysc_session_id' => $submission->nysc_session_id ?: AdminSetting::get('active_session_id'),
+                    ])
+                );
+
+                $message = 'Submission approved and student data added to the submissions list.';
+            } else {
+                $message = 'Submission rejected.';
+            }
+
+            // The temp table's status enum only allows pending/paid/expired, so a
+            // resolved submission is removed from the queue. Approved data already
+            // lives in student_nysc; a rejected submission can be re-submitted by
+            // the student.
+            $submission->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Submission status updated successfully'
+                'message' => $message,
+                'nysc_record' => $nyscRecord ? [
+                    'id' => $nyscRecord->id,
+                    'is_paid' => (bool) $nyscRecord->is_paid,
+                    'is_submitted' => (bool) $nyscRecord->is_submitted,
+                ] : null,
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -2466,8 +2503,6 @@ class NyscAdminController extends Controller
                 'Level' => $formData['level'] ?? 'N/A',
                 'Status' => $submission->status,
                 'Submission Date' => $submission->created_at,
-                'Reviewed Date' => $submission->reviewed_at,
-                'Review Notes' => $submission->review_notes,
             ];
         })->toArray();
     }
@@ -5106,7 +5141,17 @@ class NyscAdminController extends Controller
     public function getVuaSessions(): \Illuminate\Http\JsonResponse
     {
         try {
-            $sessions = VuaSession::orderBy('session', 'desc')->get();
+            // Active sessions first (status = 1), then latest by id, so the
+            // frontend can safely default to the latest active session.
+            $sessions = VuaSession::orderByRaw("CASE WHEN status = 1 THEN 0 ELSE 1 END")
+                ->orderByDesc('id')
+                ->get()
+                ->map(function ($session) {
+                    $data = $session->toArray();
+                    $data['is_active'] = (int) $session->status === 1;
+                    return $data;
+                });
+
             return response()->json([
                 'success' => true,
                 'sessions' => $sessions
