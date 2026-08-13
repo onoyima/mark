@@ -705,6 +705,15 @@ class NyscPaymentController extends Controller
                     'lga' => $studentNysc->lga,
                     'lga_of_origin' => $studentNysc->lga,
                     'username' => $studentNysc->username,
+                    // Uploaded Documents
+                    'nin_slip' => $studentNysc->nin_slip,
+                    'nin_slip_url' => $studentNysc->nin_slip
+                        ? asset('storage/' . str_replace('public/', '', $studentNysc->nin_slip))
+                        : null,
+                    'jamb_admission_letter' => $studentNysc->jamb_admission_letter,
+                    'jamb_admission_letter_url' => $studentNysc->jamb_admission_letter
+                        ? asset('storage/' . str_replace('public/', '', $studentNysc->jamb_admission_letter))
+                        : null,
                     // Academic Information
                     'matric_no' => $studentNysc->matric_no,
                     'matric_number' => $studentNysc->matric_no,
