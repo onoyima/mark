@@ -39,6 +39,7 @@ class StudentNysc extends Model
         'cgpa',
         'class_of_degree',
         'jamb_no',
+        'nin',
         'study_mode',
         'nin_slip',
         'jamb_admission_letter',

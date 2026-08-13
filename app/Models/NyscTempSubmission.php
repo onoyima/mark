@@ -36,6 +36,7 @@ class NyscTempSubmission extends Model
         'graduation_year',
         'cgpa',
         'jamb_no',
+        'nin',
         'study_mode',
         'status',
         'nin_slip',

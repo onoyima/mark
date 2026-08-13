@@ -211,6 +211,7 @@ class NyscStudentController extends Controller
             'graduation_year' => 'nullable|string|max:100',
             'cgpa' => 'nullable|numeric|min:0|max:5',
             'jamb_no' => 'required|string|max:50',
+            'nin' => 'required|digits:11',
             'study_mode' => 'required|string|max:100',
             'nin_slip' => 'nullable|string|max:255',
             'jamb_admission_letter' => 'nullable|string|max:255',
@@ -294,6 +295,7 @@ class NyscStudentController extends Controller
             'graduation_year' => 'required|string|max:100', // Changed to string for session name
             'cgpa' => 'nullable|numeric|min:0|max:5', // Now nullable
             'jamb_no' => 'required|string|max:50',
+            'nin' => 'required|digits:11',
             'study_mode' => 'required|string|max:100',
 
             // File uploads
@@ -505,6 +507,7 @@ class NyscStudentController extends Controller
                 'cgpa' => 'sometimes|numeric|min:0|max:5',
                 'jamb_no' => 'sometimes|string|max:50|nullable',
                 'jambNumber' => 'sometimes|string|max:50|nullable', // Alternative field name
+                'nin' => 'sometimes|digits:11|nullable',
                 'study_mode' => 'sometimes|string|max:100',
                 'studyMode' => 'sometimes|string|max:100', // Alternative field name
                 'level' => 'sometimes|string|max:10|nullable',
