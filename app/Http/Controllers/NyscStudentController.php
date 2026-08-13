@@ -883,4 +883,40 @@ class NyscStudentController extends Controller
             'study_modes' => $studyModes,
         ]);
     }
+
+    /**
+     * Update the student's NIN in the student_nysc table
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateNin(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $student = Auth::user();
+
+        $validated = $request->validate([
+            'nin' => 'required|digits:11',
+        ]);
+
+        $nysc = StudentNysc::where('student_id', $student->id)
+            ->where('is_submitted', true)
+            ->first();
+
+        if (!$nysc) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No submitted student data found for this student.'
+            ], 404);
+        }
+
+        $nysc->update(['nin' => $validated['nin']]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'NIN updated successfully.',
+            'data' => [
+                'nin' => $nysc->fresh()->nin
+            ]
+        ]);
+    }
 }

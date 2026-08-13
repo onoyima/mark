@@ -705,6 +705,7 @@ class NyscPaymentController extends Controller
                     'lga' => $studentNysc->lga,
                     'lga_of_origin' => $studentNysc->lga,
                     'username' => $studentNysc->username,
+                    'nin' => $studentNysc->nin,
                     // Uploaded Documents
                     'nin_slip' => $studentNysc->nin_slip,
                     'nin_slip_url' => $studentNysc->nin_slip

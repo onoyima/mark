@@ -43,6 +43,7 @@ Route::prefix('nysc')->group(function () {
         Route::get('payment/history', [NyscPaymentController::class, 'getPaymentHistory']);
         Route::get('payment/receipt/{paymentId}', [NyscPaymentController::class, 'getPaymentReceipt']);
         Route::get('student/updated-info', [NyscPaymentController::class, 'getUpdatedStudentInfo']);
+        Route::put('student/update-nin', [NyscStudentController::class, 'updateNin']);
     });
 
     // Paystack webhook (no authentication required)
