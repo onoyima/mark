@@ -487,6 +487,15 @@ class NyscDocxImportController extends Controller
                         'message' => 'Failed to process GRADUANDS CSV file: ' . $e->getMessage()
                     ]);
                 }
+
+                // Defensive: guarantee the proposed_class_of_degree key exists on
+                // every CSV record so the matching loop below behaves exactly
+                // like it does for DOCX-extracted rows.
+                $reviewData = array_map(function ($rec) {
+                    $rec['proposed_class_of_degree'] = $rec['proposed_class_of_degree']
+                        ?? (trim((string)($rec['class_of_degree'] ?? '')) !== '' ? $rec['class_of_degree'] : null);
+                    return $rec;
+                }, $reviewData);
             } else {
                 // Preflight: verify PhpWord is available to avoid runtime fatal errors
                 $phpWordAvailable = class_exists('PhpOffice\\PhpWord\\IOFactory');
@@ -1380,7 +1389,12 @@ class NyscDocxImportController extends Controller
                         'message' => 'Failed to process GRADUANDS CSV file: ' . $e->getMessage()
                     ]);
                 }
-                $review = $reviewData;
+                // Guarantee proposed_class_of_degree exists (see getGraduandsMatches)
+                $review = array_map(function ($rec) {
+                    $rec['proposed_class_of_degree'] = $rec['proposed_class_of_degree']
+                        ?? (trim((string)($rec['class_of_degree'] ?? '')) !== '' ? $rec['class_of_degree'] : null);
+                    return $rec;
+                }, $reviewData);
             } else {
                 // Preflight library availability
                 if (!class_exists('PhpOffice\\PhpWord\\IOFactory')) {

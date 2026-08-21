@@ -307,6 +307,10 @@ class DocxImportService
             $extractedData[] = [
                 'matric_no' => $matricNo,
                 'class_of_degree' => $normalizedDegree,
+                // The DOCX pipeline exposes this key as proposed_class_of_degree
+                // once records reach the matching stage; emit it here too so CSV
+                // records work identically everywhere.
+                'proposed_class_of_degree' => $normalizedDegree,
                 'source' => 'csv',
                 'row_number' => $rowIndex
             ];
