@@ -101,8 +101,11 @@ class NyscStudentController extends Controller
             'jamb_no' => $tempSubmission->jamb_no,
             'study_mode' => $tempSubmission->study_mode,
             'is_temp_submission' => true,
+            'nin' => $tempSubmission->nin,
             'nin_slip' => $tempSubmission->nin_slip,
+            'nin_slip_url' => $tempSubmission->nin_slip ? url('api/nysc/documents/' . basename($tempSubmission->nin_slip)) : null,
             'jamb_admission_letter' => $tempSubmission->jamb_admission_letter,
+            'jamb_admission_letter_url' => $tempSubmission->jamb_admission_letter ? url('api/nysc/documents/' . basename($tempSubmission->jamb_admission_letter)) : null,
             'graduation_year' => $tempSubmission->graduation_year,
             'cgpa' => $tempSubmission->cgpa
         ] : ($nysc ? [
@@ -125,8 +128,11 @@ class NyscStudentController extends Controller
             'study_mode' => $nysc->study_mode,
             'graduation_year' => $nysc->graduation_year,
             'cgpa' => $nysc->cgpa,
+            'nin' => $nysc->nin,
             'nin_slip' => $nysc->nin_slip,
+            'nin_slip_url' => $nysc->nin_slip ? url('api/nysc/documents/' . basename($nysc->nin_slip)) : null,
             'jamb_admission_letter' => $nysc->jamb_admission_letter,
+            'jamb_admission_letter_url' => $nysc->jamb_admission_letter ? url('api/nysc/documents/' . basename($nysc->jamb_admission_letter)) : null,
             'is_temp_submission' => false
         ] : null),
         'is_submitted' => $isSubmitted,
@@ -298,9 +304,10 @@ class NyscStudentController extends Controller
             'nin' => 'required|digits:11',
             'study_mode' => 'required|string|max:100',
 
-            // File uploads
-            'nin_slip' => 'required|file|mimes:pdf,jpeg,png,jpg|max:2048',
-            'jamb_admission_letter' => 'required|file|mimes:pdf,jpeg,png,jpg|max:2048',
+            // File uploads - optional so returning students don't have to re-upload
+            // documents that are already on file (validated further below)
+            'nin_slip' => 'nullable|file|mimes:pdf,jpeg,png,jpg|max:2048',
+            'jamb_admission_letter' => 'nullable|file|mimes:pdf,jpeg,png,jpg|max:2048',
 
             // Payment details
             'payment_amount' => 'required|numeric|min:0',
@@ -328,11 +335,21 @@ class NyscStudentController extends Controller
         // Handle file uploads
         $matricPrefix = preg_replace('/[^a-zA-Z0-9_-]/', '_', $validated['matric_no']);
 
+        // Capture previously submitted documents (pending temp + finalized record)
+        // so returning students can reuse them without re-uploading
+        $previousTemp = NyscTempSubmission::where('student_id', $student->id)
+            ->where('status', 'pending')
+            ->orderBy('created_at', 'desc')
+            ->first();
+        $finalizedRecord = StudentNysc::where('student_id', $student->id)->first();
+
         if ($request->hasFile('nin_slip')) {
             $file = $request->file('nin_slip');
             $filename = $matricPrefix . '_nin.' . $file->getClientOriginalExtension();
             $path = $file->storeAs('nysc/documents', $filename, 'public');
             $tempData['nin_slip'] = $path;
+        } else {
+            $tempData['nin_slip'] = $previousTemp->nin_slip ?? $finalizedRecord->nin_slip ?? null;
         }
 
         if ($request->hasFile('jamb_admission_letter')) {
@@ -340,6 +357,16 @@ class NyscStudentController extends Controller
             $filename = $matricPrefix . '_jamb.' . $file->getClientOriginalExtension();
             $path = $file->storeAs('nysc/documents', $filename, 'public');
             $tempData['jamb_admission_letter'] = $path;
+        } else {
+            $tempData['jamb_admission_letter'] = $previousTemp->jamb_admission_letter ?? $finalizedRecord->jamb_admission_letter ?? null;
+        }
+
+        // First-time submitters must provide both documents
+        if (empty($tempData['nin_slip']) || empty($tempData['jamb_admission_letter'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'NIN Slip and JAMB Admission Letter are required.'
+            ], 422);
         }
 
         // Delete any existing pending submissions for this student

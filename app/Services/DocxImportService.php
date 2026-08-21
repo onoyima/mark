@@ -179,7 +179,149 @@ class DocxImportService
             ]);
             throw $e;
         }
-        
+
+        return $extractedData;
+    }
+
+    /**
+     * Extract matriculation numbers and class of degree from a CSV file.
+     *
+     * Expected header row (case/underscore insensitive): a MATRIC_NO column
+     * and a CLASS_OF_DEGREE column. Extra columns such as S/N, NAME, GENDER
+     * or CGPA are ignored - matching is keyed on the matric number only.
+     * Returns records in the same shape as the DOCX extraction so both feed
+     * into the shared matching pipeline.
+     *
+     * @param string $filePath
+     * @return array
+     */
+    public function extractFromCsvFile(string $filePath): array
+    {
+        $extractedData = [];
+
+        if (!file_exists($filePath)) {
+            throw new \Exception("File does not exist: {$filePath}");
+        }
+        if (!is_readable($filePath)) {
+            throw new \Exception("File is not readable: {$filePath}");
+        }
+
+        $handle = fopen($filePath, 'r');
+        if ($handle === false) {
+            throw new \Exception("Unable to open file: {$filePath}");
+        }
+
+        // Detect delimiter from the header line (comma / semicolon / tab)
+        $firstLine = (string) fgets($handle);
+        $commaCount = substr_count($firstLine, ',');
+        $semicolonCount = substr_count($firstLine, ';');
+        $tabCount = substr_count($firstLine, "\t");
+        $delimiter = ',';
+        if ($semicolonCount > $commaCount && $semicolonCount >= $tabCount) {
+            $delimiter = ';';
+        } elseif ($tabCount > $commaCount && $tabCount > $semicolonCount) {
+            $delimiter = "\t";
+        }
+        rewind($handle);
+
+        $rowIndex = 0;
+        $matricColumn = -1;
+        $degreeColumn = -1;
+
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $rowIndex++;
+
+            // Skip completely empty rows
+            $nonEmpty = array_filter($row, function ($cell) {
+                return trim((string) $cell) !== '';
+            });
+            if (count($nonEmpty) === 0) {
+                continue;
+            }
+
+            // First meaningful row is treated as the header
+            if ($matricColumn < 0) {
+                $headers = array_map(function ($cell) {
+                    $text = strtolower(trim((string) $cell));
+                    // Strip UTF-8 BOM if present and normalize separators
+                    $text = preg_replace('/^\xEF\xBB\xBF/', '', $text);
+                    return str_replace(['_', '-'], ' ', trim((string) $text));
+                }, $row);
+
+                // Prefer an unambiguous "class of degree" column over generic ones
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'class') !== false && strpos($header, 'degree') !== false) {
+                        $degreeColumn = $index;
+                        break;
+                    }
+                }
+                if ($degreeColumn < 0) {
+                    foreach ($headers as $index => $header) {
+                        if (strpos($header, 'class of degree') !== false ||
+                            strpos($header, 'degree') !== false ||
+                            strpos($header, 'grade') !== false) {
+                            $degreeColumn = $index;
+                            break;
+                        }
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'matric') !== false ||
+                        strpos($header, 'reg no') !== false ||
+                        (strpos($header, 'student') !== false && strpos($header, 'no') !== false)) {
+                        $matricColumn = $index;
+                        break;
+                    }
+                }
+
+                if ($matricColumn < 0 || $degreeColumn < 0) {
+                    fclose($handle);
+                    Log::error('CSV graduands import: required columns not found', ['headers' => $headers]);
+                    throw new \Exception('Could not find MATRIC_NO and CLASS_OF_DEGREE columns in the CSV header row');
+                }
+
+                Log::info('CSV graduands import: columns detected', [
+                    'matric_column' => $matricColumn,
+                    'degree_column' => $degreeColumn,
+                    'headers' => $headers
+                ]);
+                continue;
+            }
+
+            $matricNo = strtoupper(trim((string) ($row[$matricColumn] ?? '')));
+            $classOfDegree = trim((string) ($row[$degreeColumn] ?? ''));
+
+            if ($matricNo === '' || $classOfDegree === '') {
+                continue;
+            }
+
+            $normalizedDegree = $this->normalizeClassOfDegree($classOfDegree);
+            if (!$normalizedDegree) {
+                Log::warning('CSV graduands import: unrecognized class of degree skipped', [
+                    'row_number' => $rowIndex,
+                    'value' => $classOfDegree
+                ]);
+                continue;
+            }
+
+            $extractedData[] = [
+                'matric_no' => $matricNo,
+                'class_of_degree' => $normalizedDegree,
+                'source' => 'csv',
+                'row_number' => $rowIndex
+            ];
+        }
+
+        fclose($handle);
+
+        // Remove duplicates based on matric_no (same as the DOCX pipeline)
+        $extractedData = $this->removeDuplicateRecords($extractedData);
+
+        Log::info('CSV data extraction completed', [
+            'file_path' => $filePath,
+            'extracted_count' => count($extractedData)
+        ]);
+
         return $extractedData;
     }
 

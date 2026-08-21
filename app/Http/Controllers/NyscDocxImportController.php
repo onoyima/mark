@@ -456,53 +456,84 @@ class NyscDocxImportController extends Controller
                     ],
                     'matches' => [],
                     'unmatched' => [],
-                    'message' => 'No GRADUANDS*.docx file found in storage/app'
+                    'message' => 'No GRADUANDS*.docx or *.csv file found in storage/app'
                 ]);
             }
 
-            // Preflight: verify PhpWord is available to avoid runtime fatal errors
-            $phpWordAvailable = class_exists('PhpOffice\\PhpWord\\IOFactory');
-            if (!$phpWordAvailable) {
-                return response()->json([
-                    'success' => false,
-                    'summary' => [
-                        'total_students_with_null_degree' => 0,
-                        'total_extracted_from_docx' => 0,
-                        'total_matches_found' => 0,
-                        'exact_matches' => 0,
-                        'similar_matches' => 0,
-                        'total_unmatched' => 0,
-                        'current_file' => $currentFileName,
-                        'available_files' => $availableFiles,
-                        'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
-                    ],
-                    'matches' => [],
-                    'unmatched' => [],
-                    'message' => 'PhpWord library not available on server'
-                ]);
-            }
+            // Extract data from the selected GRADUANDS file. CSV files are
+            // parsed natively; DOCX files go through the PhpWord pipeline.
+            $isCsv = strtolower(pathinfo($currentFileName, PATHINFO_EXTENSION)) === 'csv';
 
-            // Process the DOCX file to extract data
-            $result = $this->docxImportService->processDocxFile($currentFilePath);
-            
-            if (!$result['success']) {
-                return response()->json([
-                    'success' => false,
-                    'summary' => [
-                        'total_students_with_null_degree' => 0,
-                        'total_extracted_from_docx' => 0,
-                        'total_matches_found' => 0,
-                        'exact_matches' => 0,
-                        'similar_matches' => 0,
-                        'total_unmatched' => 0,
-                        'current_file' => $currentFileName,
-                        'available_files' => $availableFiles,
-                        'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
-                    ],
-                    'matches' => [],
-                    'unmatched' => [],
-                    'message' => 'Failed to process GRADUANDS file: ' . $result['error']
-                ]);
+            if ($isCsv) {
+                try {
+                    $reviewData = $this->docxImportService->extractFromCsvFile($currentFilePath);
+                } catch (\Throwable $e) {
+                    Log::error('Error extracting CSV graduands data', ['error' => $e->getMessage()]);
+                    return response()->json([
+                        'success' => false,
+                        'summary' => [
+                            'total_students_with_null_degree' => 0,
+                            'total_extracted_from_docx' => 0,
+                            'total_matches_found' => 0,
+                            'exact_matches' => 0,
+                            'similar_matches' => 0,
+                            'total_unmatched' => 0,
+                            'current_file' => $currentFileName,
+                            'available_files' => $availableFiles,
+                            'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
+                        ],
+                        'matches' => [],
+                        'unmatched' => [],
+                        'message' => 'Failed to process GRADUANDS CSV file: ' . $e->getMessage()
+                    ]);
+                }
+            } else {
+                // Preflight: verify PhpWord is available to avoid runtime fatal errors
+                $phpWordAvailable = class_exists('PhpOffice\\PhpWord\\IOFactory');
+                if (!$phpWordAvailable) {
+                    return response()->json([
+                        'success' => false,
+                        'summary' => [
+                            'total_students_with_null_degree' => 0,
+                            'total_extracted_from_docx' => 0,
+                            'total_matches_found' => 0,
+                            'exact_matches' => 0,
+                            'similar_matches' => 0,
+                            'total_unmatched' => 0,
+                            'current_file' => $currentFileName,
+                            'available_files' => $availableFiles,
+                            'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
+                        ],
+                        'matches' => [],
+                        'unmatched' => [],
+                        'message' => 'PhpWord library not available on server'
+                    ]);
+                }
+
+                // Process the DOCX file to extract data
+                $result = $this->docxImportService->processDocxFile($currentFilePath);
+
+                if (!$result['success']) {
+                    return response()->json([
+                        'success' => false,
+                        'summary' => [
+                            'total_students_with_null_degree' => 0,
+                            'total_extracted_from_docx' => 0,
+                            'total_matches_found' => 0,
+                            'exact_matches' => 0,
+                            'similar_matches' => 0,
+                            'total_unmatched' => 0,
+                            'current_file' => $currentFileName,
+                            'available_files' => $availableFiles,
+                            'file_last_modified' => date('Y-m-d H:i:s', filemtime($currentFilePath))
+                        ],
+                        'matches' => [],
+                        'unmatched' => [],
+                        'message' => 'Failed to process GRADUANDS file: ' . $result['error']
+                    ]);
+                }
+
+                $reviewData = $result['review_data'];
             }
 
             // Get ALL students for comprehensive matching within the session
@@ -522,10 +553,10 @@ class NyscDocxImportController extends Controller
             $similarMatches = [];
             $unmatched = [];
 
-            foreach ($result['review_data'] as $extractedData) {
+            foreach ($reviewData as $extractedData) {
                 $graduandsMatric = strtoupper($extractedData['matric_no']);
                 $matched = false;
-                
+
                 // First try exact match
                 if (isset($studentLookup[$graduandsMatric])) {
                     $student = $studentLookup[$graduandsMatric];
@@ -595,7 +626,7 @@ class NyscDocxImportController extends Controller
 
             $summary = [
                 'total_students_with_null_degree' => $studentsWithNullDegree,
-                'total_extracted_from_docx' => count($result['review_data']),
+                'total_extracted_from_docx' => count($reviewData),
                 'total_matches_found' => count($allMatches),
                 'exact_matches' => count($exactMatches),
                 'similar_matches' => count($similarMatches),
@@ -606,7 +637,7 @@ class NyscDocxImportController extends Controller
             ];
 
             Log::info('GRADUANDS matching completed', [
-                'total_graduands' => count($result['review_data']),
+                'total_graduands' => count($reviewData),
                 'exact_matches' => count($exactMatches),
                 'similar_matches' => count($similarMatches),
                 'unmatched' => count($unmatched)
@@ -669,7 +700,7 @@ class NyscDocxImportController extends Controller
                 'file' => [
                     'required',
                     'file',
-                    'mimetypes:application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/octet-stream',
+                    'mimetypes:application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/octet-stream,text/csv,text/plain,application/csv,application/vnd.ms-excel',
                     'max:10240'
                 ],
                 'session_id' => 'required|integer|exists:nysc_sessions,id',
@@ -687,10 +718,10 @@ class NyscDocxImportController extends Controller
             $file = $request->file('file');
             $fileName = basename($file->getClientOriginalName());
 
-            if (!preg_match('/\.docx$/i', $fileName)) {
+            if (!preg_match('/\.(docx|csv)$/i', $fileName)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Graduands files must be .docx files'
+                    'message' => 'Graduands files must be .docx or .csv files'
                 ], 422);
             }
 
@@ -840,14 +871,18 @@ class NyscDocxImportController extends Controller
     }
 
     /**
-     * List all GRADUANDS*.docx files in storage/app with their session meta.
+     * List all GRADUANDS*.docx / *.csv files in storage/app with their session meta.
      *
      * @return array
      */
     private function listGraduandsFiles(): array
     {
         $files = [];
-        foreach (glob(storage_path('app/*.docx')) as $f) {
+        $paths = array_merge(
+            glob(storage_path('app/*.docx')) ?: [],
+            glob(storage_path('app/*.csv')) ?: []
+        );
+        foreach ($paths as $f) {
             $fileName = basename($f);
             $meta = $this->graduandsMetaFor($fileName);
             $files[] = [
@@ -1327,30 +1362,46 @@ class NyscDocxImportController extends Controller
             if (!$currentFilePath) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'No GRADUANDS*.docx file found in storage/app',
+                    'message' => 'No GRADUANDS*.docx or *.csv file found in storage/app',
                     'available_files' => $availableFiles
                 ]);
             }
 
-            // Preflight library availability
-            if (!class_exists('PhpOffice\\PhpWord\\IOFactory')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'PhpWord library not available on server',
-                    'current_file' => $currentFileName,
-                    'available_files' => $availableFiles
-                ]);
-            }
+            $fileSessionId = $this->fileSessionId($currentFileName);
+            $graduationDate = $this->fileGraduationDate($currentFileName);
+            $isCsv = strtolower(pathinfo($currentFileName, PATHINFO_EXTENSION)) === 'csv';
 
-            $process = $this->docxImportService->processDocxFile($currentFilePath);
-            if (!($process['success'] ?? false)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to process GRADUANDS file: ' . ($process['error'] ?? 'Unknown error')
-                ]);
-            }
+            if ($isCsv) {
+                try {
+                    $reviewData = $this->docxImportService->extractFromCsvFile($currentFilePath);
+                } catch (\Throwable $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to process GRADUANDS CSV file: ' . $e->getMessage()
+                    ]);
+                }
+                $review = $reviewData;
+            } else {
+                // Preflight library availability
+                if (!class_exists('PhpOffice\\PhpWord\\IOFactory')) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'PhpWord library not available on server',
+                        'current_file' => $currentFileName,
+                        'available_files' => $availableFiles
+                    ]);
+                }
 
-            $review = $process['review_data'] ?? [];
+                $process = $this->docxImportService->processDocxFile($currentFilePath);
+                if (!($process['success'] ?? false)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to process GRADUANDS file: ' . ($process['error'] ?? 'Unknown error')
+                    ]);
+                }
+
+                $review = $process['review_data'] ?? [];
+            }
 
             $sessionId = $fileSessionId ?: ($request->input('session_id') ?: AdminSetting::get('active_session_id'));
             $query = StudentNysc::select(['id','matric_no','fname','mname','lname','class_of_degree']);
