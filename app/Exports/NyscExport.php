@@ -45,7 +45,7 @@ class NyscExport implements FromQuery, WithHeadings, WithMapping
             $row->lname,
             $row->mname,
             $row->gender,
-            $row->dob ? $row->dob->format('Y-m-d') : '',
+            $row->dob ? $row->dob->format('d/m/Y') : '',
             $row->marital_status,
             $row->phone,
             $row->email,

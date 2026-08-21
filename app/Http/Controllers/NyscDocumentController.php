@@ -11,6 +11,32 @@ use Illuminate\Support\Str;
 class NyscDocumentController extends Controller
 {
     /**
+     * Serve a public NYSC document (NIN slip / JAMB admission letter) by filename.
+     *
+     * Streams the file directly through the API so it works regardless of
+     * storage symlink / web server configuration.
+     *
+     * @param  string  $filename
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     */
+    public function servePublicDocument(string $filename)
+    {
+        // Only allow plain filenames - prevents path traversal
+        if (!preg_match('/^[A-Za-z0-9._\-]+$/', $filename)) {
+            abort(404);
+        }
+
+        $disk = Storage::disk('public');
+        $path = 'nysc/documents/' . $filename;
+
+        if (!$disk->exists($path)) {
+            abort(404);
+        }
+
+        return response()->file($disk->path($path));
+    }
+
+    /**
      * Get all documents for authenticated student
      *
      * @return \Illuminate\Http\JsonResponse

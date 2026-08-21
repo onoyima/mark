@@ -55,6 +55,10 @@ Route::prefix('nysc')->group(function () {
     // Temporary test endpoint for pending payments (no auth)
     Route::get('test-pending-payments', [NyscAdminController::class, 'getPendingPaymentsStats']);
     
+    // Public document serving (no auth - rendered via <img>/<iframe> tags)
+    Route::get('documents/{filename}', [\App\Http\Controllers\NyscDocumentController::class, 'servePublicDocument'])
+        ->where('filename', '[A-Za-z0-9._\-]+');
+
     // Academic sessions route
     Route::get('vua-sessions', [NyscAdminController::class, 'getVuaSessions']);
 

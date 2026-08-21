@@ -3689,7 +3689,9 @@ class NyscAdminController extends Controller
                 'marital_status',
                 'jamb_no',
                 'course_study',
-                'study_mode'
+                'study_mode',
+                'is_military',
+                'is_status'
             ])->get();
 
             $filename = 'student_nysc_data_' . date('Y-m-d_H-i-s') . '.csv';
@@ -3727,9 +3729,11 @@ class NyscAdminController extends Controller
                     'class_of_degree',
                     'dob',
                     'graduation_year',
+                    'status',
                     'gender',
                     'marital_status',
                     'jamb_no',
+                    'is_military',
                     'course_study',
                     'study_mode'
                 ]);
@@ -3746,11 +3750,13 @@ class NyscAdminController extends Controller
                         $student->phone,
                         $student->state,
                         $student->class_of_degree,
-                        $student->dob ? $student->dob->format('Y-m-d') : '',
+                        $student->dob ? $student->dob->format('d/m/Y') : '',
                         $student->graduation_year,
+                        $student->is_status ? 'Fresh' : 'Revalidation',
                         $genderMap[$genderKey] ?? $student->gender,
                         $student->marital_status,
                         $student->jamb_no,
+                        $student->is_military ? 'Yes' : 'No',
                         $student->course_study,
                         $student->study_mode
                     ];
@@ -5238,10 +5244,11 @@ class NyscAdminController extends Controller
 
             $documents = [];
 
-            // Helper to get public URL
+            // Helper to get public URL (served through the API so documents
+            // render regardless of storage symlink / web server config)
             $getPublicUrl = function($path) {
                 if (!$path) return null;
-                return asset('storage/' . str_replace('public/', '', $path));
+                return url('api/nysc/documents/' . basename($path));
             };
 
             // Extract documents from temp submission
