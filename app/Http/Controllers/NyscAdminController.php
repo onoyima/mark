@@ -3669,13 +3669,13 @@ class NyscAdminController extends Controller
      *
      * @return Response
      */
-    public function exportStudentNyscCsv()
+    public function exportStudentNyscCsv(Request $request)
     {
         try {
             Log::info('Starting CSV export of student NYSC data');
 
-            // Get all student NYSC records with exact table columns
-            $students = StudentNysc::select([
+            // Get student NYSC records with exact table columns (with optional session/date filters)
+            $students = $this->csvExportQuery($request)->select([
                 'matric_no',
                 'fname',
                 'mname',
@@ -3702,7 +3702,15 @@ class NyscAdminController extends Controller
                 'Pragma' => 'public',
             ];
 
-            $callback = function() use ($students) {
+            // Columns that must keep leading zeros / exact text formatting:
+            // 4 = phone, 7 = dob, 8 = graduation_year
+            // matric_no (0) and jamb_no (11) are intentionally excluded.
+            $textColumns = [4, 7, 8];
+
+            // Normalize gender to single-letter codes: Male -> M, Female -> F
+            $genderMap = ['male' => 'M', 'female' => 'F'];
+
+            $callback = function() use ($students, $textColumns, $genderMap) {
                 $file = fopen('php://output', 'w');
 
                 // Add BOM for proper UTF-8 encoding in Excel
@@ -3728,7 +3736,9 @@ class NyscAdminController extends Controller
 
                 // Add data - exact values from database
                 foreach ($students as $student) {
-                    fputcsv($file, [
+                    $genderKey = strtolower(trim((string) $student->gender));
+
+                    $row = [
                         $student->matric_no,
                         $student->fname,
                         $student->mname,
@@ -3736,14 +3746,22 @@ class NyscAdminController extends Controller
                         $student->phone,
                         $student->state,
                         $student->class_of_degree,
-                        $student->dob,
+                        $student->dob ? $student->dob->format('Y-m-d') : '',
                         $student->graduation_year,
-                        $student->gender,
+                        $genderMap[$genderKey] ?? $student->gender,
                         $student->marital_status,
                         $student->jamb_no,
                         $student->course_study,
                         $student->study_mode
-                    ]);
+                    ];
+
+                    foreach ($textColumns as $i) {
+                        if (isset($row[$i]) && $row[$i] !== '' && $row[$i] !== null) {
+                            $row[$i] = '\'' . $row[$i];
+                        }
+                    }
+
+                    fputcsv($file, $row);
                 }
 
                 fclose($file);
@@ -3767,15 +3785,42 @@ class NyscAdminController extends Controller
     }
 
     /**
+     * Base query for CSV exports with optional session and date-range filters
+     *
+     * @param Request $request
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    private function csvExportQuery(Request $request)
+    {
+        $query = StudentNysc::query();
+
+        $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
+        if ($sessionId) {
+            $query->where('nysc_session_id', $sessionId);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('updated_at', '>=', $request->input('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('updated_at', '<=', $request->input('date_to'));
+        }
+
+        return $query;
+    }
+
+    /**
      * Get CSV export statistics
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getCsvExportStats()
+    public function getCsvExportStats(Request $request)
     {
         try {
-            $totalRecords = StudentNysc::count();
-            $recordsWithClassDegree = StudentNysc::whereNotNull('class_of_degree')->count();
+            $baseQuery = $this->csvExportQuery($request);
+            $totalRecords = (clone $baseQuery)->count();
+            $recordsWithClassDegree = (clone $baseQuery)->whereNotNull('class_of_degree')->count();
             $recordsWithoutClassDegree = $totalRecords - $recordsWithClassDegree;
 
             return response()->json([
