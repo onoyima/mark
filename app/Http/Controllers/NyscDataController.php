@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\AdminSetting;
+use App\Models\Student;
 use App\Models\StudentNysc;
+use App\Models\Staff;
 use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\NyscExport;
@@ -16,7 +18,24 @@ class NyscDataController extends Controller
 {
     public function index(Request $request)
     {
-        $data = $this->filteredQuery($request)->get();
+        // No longer anonymous: guests are rejected, students only ever
+        // receive their own record, staff/admins see the full list.
+        $user = $request->user('sanctum');
+
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Authentication required. Please log in to view your details.'
+            ], 401);
+        }
+
+        if ($user instanceof Student) {
+            // A student sees only their own row(s), regardless of which
+            // session is active so their record never "disappears".
+            $data = StudentNysc::where('student_id', $user->id)->get();
+        } else {
+            $data = $this->filteredQuery($request)->get();
+        }
 
         return response()->json([
             'status' => 'success',
@@ -26,6 +45,16 @@ class NyscDataController extends Controller
 
     public function export(Request $request, $format)
     {
+        // Exports contain unmasked PII (DOB, phone, etc.) and are therefore
+        // restricted to authenticated staff/admin accounts.
+        $user = $request->user('sanctum');
+        if (!$user instanceof Staff) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized. Only administrators can export data.'
+            ], 403);
+        }
+
         $query = $this->filteredQuery($request);
         $fileName = 'nysc_data_' . now()->format('Ymd_His');
 
