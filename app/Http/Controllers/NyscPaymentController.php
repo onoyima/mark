@@ -706,15 +706,16 @@ class NyscPaymentController extends Controller
                     'lga_of_origin' => $studentNysc->lga,
                     'username' => $studentNysc->username,
                     'nin' => $studentNysc->nin,
-                    // Uploaded Documents (served through the API so they render
-                    // regardless of storage symlink / web server config)
+                    // Uploaded Documents - RELATIVE paths only. The frontend
+                    // proxies /api/nysc/documents/* to this API so users never
+                    // see the backend domain.
                     'nin_slip' => $studentNysc->nin_slip,
                     'nin_slip_url' => $studentNysc->nin_slip
-                        ? url('api/nysc/documents/' . basename($studentNysc->nin_slip))
+                        ? '/api/nysc/documents/' . basename($studentNysc->nin_slip)
                         : null,
                     'jamb_admission_letter' => $studentNysc->jamb_admission_letter,
                     'jamb_admission_letter_url' => $studentNysc->jamb_admission_letter
-                        ? url('api/nysc/documents/' . basename($studentNysc->jamb_admission_letter))
+                        ? '/api/nysc/documents/' . basename($studentNysc->jamb_admission_letter)
                         : null,
                     // Academic Information
                     'matric_no' => $studentNysc->matric_no,

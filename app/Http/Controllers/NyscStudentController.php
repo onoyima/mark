@@ -103,9 +103,9 @@ class NyscStudentController extends Controller
             'is_temp_submission' => true,
             'nin' => $tempSubmission->nin,
             'nin_slip' => $tempSubmission->nin_slip,
-            'nin_slip_url' => $tempSubmission->nin_slip ? url('api/nysc/documents/' . basename($tempSubmission->nin_slip)) : null,
+            'nin_slip_url' => $tempSubmission->nin_slip ? '/api/nysc/documents/' . basename($tempSubmission->nin_slip) : null,
             'jamb_admission_letter' => $tempSubmission->jamb_admission_letter,
-            'jamb_admission_letter_url' => $tempSubmission->jamb_admission_letter ? url('api/nysc/documents/' . basename($tempSubmission->jamb_admission_letter)) : null,
+            'jamb_admission_letter_url' => $tempSubmission->jamb_admission_letter ? '/api/nysc/documents/' . basename($tempSubmission->jamb_admission_letter) : null,
             'graduation_year' => $tempSubmission->graduation_year,
             'cgpa' => $tempSubmission->cgpa
         ] : ($nysc ? [
@@ -130,9 +130,9 @@ class NyscStudentController extends Controller
             'cgpa' => $nysc->cgpa,
             'nin' => $nysc->nin,
             'nin_slip' => $nysc->nin_slip,
-            'nin_slip_url' => $nysc->nin_slip ? url('api/nysc/documents/' . basename($nysc->nin_slip)) : null,
+            'nin_slip_url' => $nysc->nin_slip ? '/api/nysc/documents/' . basename($nysc->nin_slip) : null,
             'jamb_admission_letter' => $nysc->jamb_admission_letter,
-            'jamb_admission_letter_url' => $nysc->jamb_admission_letter ? url('api/nysc/documents/' . basename($nysc->jamb_admission_letter)) : null,
+            'jamb_admission_letter_url' => $nysc->jamb_admission_letter ? '/api/nysc/documents/' . basename($nysc->jamb_admission_letter) : null,
             'is_temp_submission' => false
         ] : null),
         'is_submitted' => $isSubmitted,

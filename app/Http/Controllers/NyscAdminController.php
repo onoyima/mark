@@ -5248,7 +5248,7 @@ class NyscAdminController extends Controller
             // render regardless of storage symlink / web server config)
             $getPublicUrl = function($path) {
                 if (!$path) return null;
-                return url('api/nysc/documents/' . basename($path));
+                return '/api/nysc/documents/' . basename($path);
             };
 
             // Extract documents from temp submission
