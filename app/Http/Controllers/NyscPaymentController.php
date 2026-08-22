@@ -726,7 +726,10 @@ class NyscPaymentController extends Controller
                     'level' => $studentNysc->level,
                     'graduation_year' => $studentNysc->graduation_year,
                     'year_of_graduation' => $studentNysc->graduation_year,
-                    'degree_class' => 'Not Specified', // Field not available in current table
+                    // Real class of degree from student_nysc (set via the
+                    // graduands review/import flow); null until admin assigns one
+                    'degree_class' => $studentNysc->class_of_degree,
+                    'class_of_degree' => $studentNysc->class_of_degree,
                     'cgpa' => $studentNysc->cgpa,
                     'jamb_no' => $studentNysc->jamb_no,
                     'study_mode' => $studentNysc->study_mode,
