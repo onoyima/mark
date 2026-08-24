@@ -3800,8 +3800,13 @@ class NyscAdminController extends Controller
     {
         $query = StudentNysc::query();
 
-        $sessionId = $request->input('session_id') ?: AdminSetting::get('active_session_id');
-        if ($sessionId) {
+        // An explicit session_id key always wins: empty value = ALL sessions.
+        // Only fall back to the active session when the key is absent.
+        $sessionId = $request->exists('session_id')
+            ? $request->input('session_id')
+            : AdminSetting::get('active_session_id');
+
+        if ($sessionId !== null && $sessionId !== '') {
             $query->where('nysc_session_id', $sessionId);
         }
 
