@@ -139,7 +139,7 @@ class NyscPreparedListController extends Controller
                     'matric_no', 'fname', 'mname', 'lname', 'phone', 'state',
                     'class_of_degree', 'dob', 'graduation_year', 'gender',
                     'marital_status', 'jamb_no', 'is_military', 'course_study',
-                    'study_mode',
+                    'study_mode', 'nysc_session_id', 'updated_at',
                 ]);
 
             // Index portal rows by normalised matric.
@@ -187,9 +187,11 @@ class NyscPreparedListController extends Controller
                 $diffs = $this->diffForStudent($row, $listRow);
                 if (!empty($diffs)) {
                     $changedStudents[] = [
-                        'matric_no' => $row->matric_no,
-                        'full_name' => trim(($row->fname ?? '') . ' ' . ($row->mname ?? '') . ' ' . ($row->lname ?? '')),
-                        'changes'   => $diffs,
+                        'matric_no'  => $row->matric_no,
+                        'full_name'  => trim(($row->fname ?? '') . ' ' . ($row->mname ?? '') . ' ' . ($row->lname ?? '')),
+                        'session_id' => $row->nysc_session_id,
+                        'updated_at' => optional($row->updated_at)->format('d/m/Y H:i'),
+                        'changes'    => $diffs,
                     ];
                 }
             }
@@ -563,6 +565,11 @@ class NyscPreparedListController extends Controller
      * Portal query with the standard explicit-wins session rule:
      * session_id present (even empty) wins; '' = ALL sessions; absent falls
      * back to the active session.
+     *
+     * Optional updated_from / updated_to (Y-m-d) narrow results to records
+     * touched inside that window. Combined with '' session_id this finds
+     * updates across ALL sessions — e.g. everything edited since the
+     * prepared list was produced, wherever the student's record now sits.
      */
     private function portalQuery(Request $request)
     {
@@ -574,6 +581,33 @@ class NyscPreparedListController extends Controller
 
         if ($sessionId !== null && $sessionId !== '') {
             $query->where('nysc_session_id', $sessionId);
+        }
+
+        return $this->applyUpdatedWindow($query, $request);
+    }
+
+    /**
+     * Apply the optional updated_at date window. Invalid/empty values are
+     * ignored so the caller never gets a broken query. Pure query-builder
+     * work — nothing executes until ->get().
+     */
+    private function applyUpdatedWindow($query, Request $request)
+    {
+        foreach (['updated_from' => '>=', 'updated_to' => '<='] as $param => $operator) {
+            $value = trim((string) $request->input($param, ''));
+            if ($value === '') {
+                continue;
+            }
+
+            try {
+                $date = \Carbon\Carbon::createFromFormat('Y-m-d', $value);
+                if ($date === false) {
+                    continue;
+                }
+                $query->whereDate('updated_at', $operator, $date->toDateString());
+            } catch (\Exception $e) {
+                // Unparseable date — ignore the filter entirely.
+            }
         }
 
         return $query;
@@ -595,7 +629,7 @@ class NyscPreparedListController extends Controller
 
             $portalRows = $this->portalQuery($request)->get();
 
-            $headers = ['matric_no', 'fields_changed'];
+            $headers = ['matric_no', 'session_id', 'last_updated', 'fields_changed'];
             foreach ($this->changeFields as $f) {
                 $headers[] = 'old_' . $f;
                 $headers[] = 'new_' . $f;
@@ -615,6 +649,8 @@ class NyscPreparedListController extends Controller
 
                 $csvRow = [
                     $row->matric_no,
+                    $row->nysc_session_id,
+                    optional($row->updated_at)->format('d/m/Y H:i'),
                     implode(', ', array_keys($diffs)),
                 ];
 
