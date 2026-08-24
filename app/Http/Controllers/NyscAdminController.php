@@ -3752,7 +3752,7 @@ class NyscAdminController extends Controller
                         $student->class_of_degree,
                         $student->dob ? $student->dob->format('d/m/Y') : '',
                         $student->graduation_year,
-                        $student->is_status ? 'Fresh' : 'Revalidation',
+                        'Fresh',
                         $genderMap[$genderKey] ?? $student->gender,
                         $student->marital_status,
                         $student->jamb_no,

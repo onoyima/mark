@@ -104,7 +104,8 @@ class NyscDataController extends Controller
     /**
      * Stream a CSV in the exact format produced by the /admin/csv-export
      * page: UTF-8 BOM, table column names, gender as M/F, status as
-     * Fresh/Revalidation, military as Yes/No, and apostrophe protection on
+     * page: UTF-8 BOM, table column names, gender as M/F, status always
+     * Fresh, military as Yes/No, and apostrophe protection on
      * phone, dob and graduation_year so Excel keeps leading zeros.
      */
     private function streamTableCsv($students, string $filename)
@@ -162,7 +163,7 @@ class NyscDataController extends Controller
                     $student->class_of_degree,
                     $student->dob ? $student->dob->format('d/m/Y') : '',
                     $student->graduation_year,
-                    $student->is_status ? 'Fresh' : 'Revalidation',
+                    'Fresh',
                     $genderMap[$genderKey] ?? $student->gender,
                     $student->marital_status,
                     $student->jamb_no,
