@@ -286,7 +286,7 @@ class NyscPreparedListController extends Controller
                 'not_prepared_' . now()->format('Y-m-d_H-i-s') . '.csv',
                 $headers,
                 $out,
-                [3, 7, 8] // phone, dob, graduation_year keep leading zeros
+                [4, 7, 8] // phone(4), dob(7), graduation_year(8) keep leading zeros
             );
         } catch (\Exception $e) {
             Log::error('Not-prepared export failed: ' . $e->getMessage());
@@ -340,6 +340,13 @@ class NyscPreparedListController extends Controller
                 : trim((string) ($portalRow->$field ?? ''));
 
             $old = trim((string) ($listRow[$field] ?? ''));
+
+            // The prepared list never recorded this field, so there is no
+            // prior value to compare against. Skip instead of flagging every
+            // such student as "updated" (blank columns must not create noise).
+            if ($old === '') {
+                continue;
+            }
 
             if ($this->valuesMatch($field, $new, $old)) {
                 continue;
@@ -420,7 +427,14 @@ class NyscPreparedListController extends Controller
         $formats = ['d/m/Y', 'Y-m-d', 'd-m-Y', 'd.m.Y', 'j M Y', 'j F Y', 'jS M Y', 'jS F Y', 'j-M-Y', 'd-M-Y', 'M j, Y', 'F j, Y'];
         foreach ($formats as $format) {
             $date = \DateTime::createFromFormat('!' . $format, $value);
-            if ($date instanceof \DateTime) {
+
+            // createFromFormat silently tolerates trailing junk and rollover
+            // dates (31/02/2020 becomes March); only accept clean parses.
+            $lastErrors = \DateTime::getLastErrors();
+            $clean = $lastErrors === false
+                || ($lastErrors['warning_count'] === 0 && $lastErrors['error_count'] === 0);
+
+            if ($date instanceof \DateTime && $clean) {
                 return $date->format('Y-m-d');
             }
         }
@@ -581,7 +595,7 @@ class NyscPreparedListController extends Controller
             $portalRows = $this->portalQuery($request)->get();
 
             $headers = ['matric_no', 'fields_changed'];
-            foreach (['fname', 'mname', 'lname', 'dob', 'gender', 'marital_status', 'jamb_no'] as $f) {
+            foreach ($this->changeFields as $f) {
                 $headers[] = 'old_' . $f;
                 $headers[] = 'new_' . $f;
             }
@@ -603,7 +617,7 @@ class NyscPreparedListController extends Controller
                     implode(', ', array_keys($diffs)),
                 ];
 
-                foreach (['fname', 'mname', 'lname', 'dob', 'gender', 'marital_status', 'jamb_no'] as $f) {
+                foreach ($this->changeFields as $f) {
                     $csvRow[] = $diffs[$f]['old'] ?? '';
                     $csvRow[] = $diffs[$f]['new'] ?? '';
                 }
