@@ -419,7 +419,8 @@ class NyscPreparedListController extends Controller
      */
     private function parseDateFlexible(?string $value): ?string
     {
-        $value = trim((string) $value);
+        // Tolerate stray Excel text-marker apostrophes glued to the value.
+        $value = ltrim(trim((string) $value), "'");
         if ($value === '') {
             return null;
         }
@@ -513,7 +514,7 @@ class NyscPreparedListController extends Controller
             $matric = null;
 
             for ($c = 1; $c <= $highestCol; $c++) {
-                $value = trim((string) $sheet->getCell([$c, $r])->getFormattedValue());
+                $value = $this->cleanCell($sheet->getCell([$c, $r])->getFormattedValue());
                 $raw[] = $value;
 
                 $canon = $canonicalByCol[$c] ?? null;
@@ -645,6 +646,18 @@ class NyscPreparedListController extends Controller
         }
 
         return $this->storageDir . '/' . $filename;
+    }
+
+    /**
+     * Normalise a raw spreadsheet cell for comparison/storage: trim
+     * whitespace and drop leading apostrophes. Excel uses a leading ' as an
+     * invisible "treat as text" marker, and CSV round-trips (e.g. our own
+     * exports that protect phone/dob leading zeros) turn it into literal
+     * content — left in place it would break date parsing and name matching.
+     */
+    private function cleanCell($value): string
+    {
+        return ltrim(trim((string) $value), "'");
     }
 
     private function normalizeHeader(?string $header): ?string
