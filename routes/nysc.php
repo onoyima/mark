@@ -191,6 +191,16 @@ Route::prefix('nysc')->group(function () {
         Route::get('csv-export/test', [NyscAdminController::class, 'testCsvExport']);
         Route::get('csv-export/student-data', [NyscAdminController::class, 'exportStudentNyscCsv']);
         Route::get('csv-export/stats', [NyscAdminController::class, 'getCsvExportStats']);
+
+        // Prepared Lists (upload to storage only, compare against student_nysc by matric)
+        Route::get('prepared-lists', [\App\Http\Controllers\NyscPreparedListController::class, 'index']);
+        Route::post('prepared-lists/upload', [\App\Http\Controllers\NyscPreparedListController::class, 'upload']);
+        Route::delete('prepared-lists/{filename}', [\App\Http\Controllers\NyscPreparedListController::class, 'destroy'])
+            ->where('filename', '[A-Za-z0-9._\-]+');
+        Route::get('prepared-lists/compare', [\App\Http\Controllers\NyscPreparedListController::class, 'compare']);
+        Route::get('prepared-lists/export/not-prepared', [\App\Http\Controllers\NyscPreparedListController::class, 'exportNotPrepared']);
+        Route::get('prepared-lists/export/prepared', [\App\Http\Controllers\NyscPreparedListController::class, 'exportPrepared']);
+        Route::get('prepared-lists/export/changed', [\App\Http\Controllers\NyscPreparedListController::class, 'exportChanged']);
         
         // NYSC Upload Analysis routes
         Route::get('upload-analysis', [\App\Http\Controllers\NyscUploadAnalysisController::class, 'analyzeUploads']);
