@@ -227,6 +227,7 @@ class DocxImportService
         $rowIndex = 0;
         $matricColumn = -1;
         $degreeColumn = -1;
+        $nameColumn = -1;
 
         while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
             $rowIndex++;
@@ -273,6 +274,24 @@ class DocxImportService
                         break;
                     }
                 }
+                foreach ($headers as $index => $header) {
+                    if ($index === $matricColumn || $index === $degreeColumn) {
+                        continue;
+                    }
+                    // Match a NAME / STUDENT NAME / SURNAME / FULL NAME column,
+                    // but avoid accidentally matching the matric number column.
+                    if ($header === 'name' ||
+                        $header === 'student name' ||
+                        $header === 'names' ||
+                        $header === 'full name' ||
+                        $header === 'surname' ||
+                        $header === 'fullname' ||
+                        $header === 'student names' ||
+                        (strpos($header, 'name') !== false && strpos($header, 'matric') === false)) {
+                        $nameColumn = $index;
+                        break;
+                    }
+                }
 
                 if ($matricColumn < 0 || $degreeColumn < 0) {
                     fclose($handle);
@@ -283,6 +302,7 @@ class DocxImportService
                 Log::info('CSV graduands import: columns detected', [
                     'matric_column' => $matricColumn,
                     'degree_column' => $degreeColumn,
+                    'name_column' => $nameColumn,
                     'headers' => $headers
                 ]);
                 continue;
@@ -290,6 +310,7 @@ class DocxImportService
 
             $matricNo = strtoupper(trim((string) ($row[$matricColumn] ?? '')));
             $classOfDegree = trim((string) ($row[$degreeColumn] ?? ''));
+            $studentName = $nameColumn >= 0 ? trim((string) ($row[$nameColumn] ?? '')) : '';
 
             if ($matricNo === '' || $classOfDegree === '') {
                 continue;
@@ -311,6 +332,7 @@ class DocxImportService
                 // once records reach the matching stage; emit it here too so CSV
                 // records work identically everywhere.
                 'proposed_class_of_degree' => $normalizedDegree,
+                'student_name' => $studentName !== '' ? $studentName : null,
                 'source' => 'csv',
                 'row_number' => $rowIndex
             ];
@@ -388,6 +410,7 @@ class DocxImportService
         $headers = [];
         $matricColumn = -1;
         $degreeColumn = -1;
+        $nameColumn = -1;
         
         $rows = $table->getRows();
         
@@ -417,13 +440,24 @@ class DocxImportService
                     Log::info("Found degree column at index {$index}: {$cellText}");
                 }
                 
+                // More flexible matching for a name column (e.g. NAME, STUDENT NAME, FULL NAME)
+                if ($nameColumn < 0 &&
+                    strpos($normalizedText, 'name') !== false &&
+                    strpos($normalizedText, 'matric') === false &&
+                    strpos($normalizedText, 'reg') === false &&
+                    strpos($normalizedText, 'no') === false) {
+                    $nameColumn = $index;
+                    Log::info("Found name column at index {$index}: {$cellText}");
+                }
+                
                 $headers[] = $cellText;
             }
             
             Log::info('Table headers found', [
                 'headers' => $headers,
                 'matric_column' => $matricColumn,
-                'degree_column' => $degreeColumn
+                'degree_column' => $degreeColumn,
+                'name_column' => $nameColumn
             ]);
         }
         
@@ -434,6 +468,7 @@ class DocxImportService
             
             $matricNo = '';
             $classOfDegree = '';
+            $studentName = '';
             
             if ($matricColumn >= 0 && isset($cells[$matricColumn])) {
                 $matricNo = trim($this->getCellText($cells[$matricColumn]));
@@ -443,12 +478,17 @@ class DocxImportService
                 $classOfDegree = trim($this->getCellText($cells[$degreeColumn]));
             }
             
+            if ($nameColumn >= 0 && isset($cells[$nameColumn])) {
+                $studentName = trim($this->getCellText($cells[$nameColumn]));
+            }
+            
             if (!empty($matricNo) && !empty($classOfDegree)) {
                 $normalizedDegree = $this->normalizeClassOfDegree($classOfDegree);
                 if ($normalizedDegree) {
                     $data[] = [
                         'matric_no' => strtoupper($matricNo),
                         'class_of_degree' => $normalizedDegree,
+                        'student_name' => $studentName !== '' ? $studentName : null,
                         'source' => 'table',
                         'row_number' => $i + 1
                     ];
