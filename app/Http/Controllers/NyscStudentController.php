@@ -673,6 +673,31 @@ class NyscStudentController extends Controller
                 $nerdData['graduation_session'] = $nysc->graduation_year;
             }
 
+            // Re-derive the award columns (award_title, award_short_title,
+            // programme_award_combined, programme_category) from the student's
+            // programme_major so the nerd mirror stays in sync with
+            // programme_award.txt on every confirm/update. Only set them when a
+            // match resolves, so an unknown programme never wipes existing
+            // award data that the review/backfill already populated.
+            $award = null;
+            if (($nysc->course_study ?? '') !== '' && $nysc->course_study !== null) {
+                $award = (new \App\Services\ProgrammeAwardService())->resolve($nysc->course_study);
+            }
+            if ($award) {
+                if (isset($award['award_title']) && $award['award_title'] !== null) {
+                    $nerdData['award_title'] = $award['award_title'];
+                }
+                if (isset($award['award_short_title']) && $award['award_short_title'] !== null) {
+                    $nerdData['award_short_title'] = $award['award_short_title'];
+                }
+                if (isset($award['programme_award_combined']) && $award['programme_award_combined'] !== null) {
+                    $nerdData['programme_award_combined'] = $award['programme_award_combined'];
+                }
+                if (isset($award['programme_category']) && $award['programme_category'] !== null) {
+                    $nerdData['programme_category'] = $award['programme_category'];
+                }
+            }
+
             StudentNerd::updateOrCreate(
                 ['student_id' => $nysc->student_id],
                 $nerdData

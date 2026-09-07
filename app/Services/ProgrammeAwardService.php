@@ -201,33 +201,47 @@ class ProgrammeAwardService
 
     /**
      * Derive a programme category from the award short title.
+     *
+     * The category is the LEVEL of the award, not its faculty:
+     *  - Bachelor degrees (B.Sc, B.A, B.Ed, B.Eng, LL.B, MBBS, ...) -> Undergraduate
+     *  - Postgraduate degrees (M.Sc, M.A, P.G.D., Ph.D, ...)        -> Postgraduate
+     *  - Diplomas / national diplomas (ND, HND, Diploma, NCE)       -> Diploma
      */
     protected function categoryForShortTitle(string $short): ?string
     {
-        $key = mb_strtolower(preg_replace('/[^a-zA-Z]/', '', $short));
-
-        $map = [
-            'bsc' => 'Science',
-            'ba' => 'Arts',
-            'bed' => 'Education',
-            'beng' => 'Engineering',
-            'llb' => 'Law',
-            'mbbs' => 'Medicine',
-            'bmls' => 'Medical Laboratory Science',
-            'bns' => 'Nursing',
-            'bnsc' => 'Nursing',
-            'pharmd' => 'Pharmacy',
-            'bph' => 'Philosophy',
-            'bphil' => 'Philosophy',
-            'bth' => 'Theology',
-        ];
-
-        // "bn sc" style short titles collapse to "bnsc".
+        // Normalise (lowercase, dots/spaces removed) for prefix matching.
         $compact = str_replace(['. ', '.', ' '], '', mb_strtolower($short));
-        if (isset($map[$compact])) {
-            return $map[$compact];
+
+        // Diploma-level signals.
+        foreach (['nd', 'hnd', 'nce'] as $p) {
+            if (str_starts_with($compact, $p)) {
+                return 'Diploma';
+            }
+        }
+        if (str_contains($compact, 'diploma')) {
+            return 'Diploma';
         }
 
-        return $map[$key] ?? null;
+        // Bachelor degrees that do not begin with 'B':
+        // LL.B (Law) and MBBS (Medicine & Surgery) are undergraduates.
+        foreach (['llb', 'mbbs'] as $b) {
+            if (str_starts_with($compact, $b)) {
+                return 'Undergraduate';
+            }
+        }
+
+        // Master's / doctorate -> Postgraduate.
+        foreach (['phd', 'pgd', 'mba', 'msc', 'ma', 'meng', 'mtech', 'mllb', 'med'] as $prefix) {
+            if (str_starts_with($compact, $prefix)) {
+                return 'Postgraduate';
+            }
+        }
+
+        // Everything with a bachelor 'B' prefix (B.Sc, B.A, B.Eng, BN.Sc, BMLS, ...).
+        if (str_starts_with($compact, 'b')) {
+            return 'Undergraduate';
+        }
+
+        return null;
     }
 }
