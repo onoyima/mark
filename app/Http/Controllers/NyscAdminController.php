@@ -5283,8 +5283,28 @@ $students = $query->orderBy('student_nerds.id', 'desc')->get();
                 if ($value === null || trim((string) $value) === '') {
                     return '';
                 }
-                $ts = strtotime((string) $value);
-                return $ts !== false ? date('d/m/Y', $ts) : (string) $value;
+                $value = trim((string) $value);
+
+                // Only a value that starts with a 4-digit year is unambiguous
+                // (ISO YYYY-M-D / YYYY-MM-DD / datetime) — safe to parse properly.
+                if (preg_match('#^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d)#', $value)) {
+                    $ts = strtotime($value);
+                    return $ts !== false ? date('d/m/Y', $ts) : $value;
+                }
+
+                // Everything else is day/month/year in the stored order. Split it
+                // into parts and zero-pad the numbers WITHOUT any calendar
+                // interpretation, so a person's day and month are never swapped.
+                if (preg_match('#^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{1,4})$#', $value, $m)) {
+                    $year = $m[3];
+                    if (strlen($year) === 2) {
+                        $year = ((int) $year < 70 ? '20' : '19') . $year;
+                    }
+                    return sprintf('%02d/%02d/%04d', (int) $m[1], (int) $m[2], (int) $year);
+                }
+
+                $ts = strtotime($value);
+                return $ts !== false ? date('d/m/Y', $ts) : $value;
             };
 
             $uppercase = function ($value) {
