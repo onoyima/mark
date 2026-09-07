@@ -352,6 +352,290 @@ class DocxImportService
     }
 
     /**
+     * Extract nerd-related graduate fields (CGPA, class of degree, graduation
+     * date and graduation session) from a CSV file.
+     *
+     * Matches rows by matric number. Column detection is case/separator
+     * insensitive, so headers like "MATRIC_NO", "FINAL CGPA", "CLASS OF
+     * DEGREE", "GRADUATION DATE" and "GRADUATION SESSION" are all recognised.
+     * Extra columns such as S/N, NAME or GENDER are ignored.
+     *
+     * @param string $filePath
+     * @return array
+     */
+    public function extractNerdDataFromCsvFile(string $filePath): array
+    {
+        $extractedData = [];
+
+        if (!file_exists($filePath)) {
+            throw new \Exception("File does not exist: {$filePath}");
+        }
+        if (!is_readable($filePath)) {
+            throw new \Exception("File is not readable: {$filePath}");
+        }
+
+        $handle = fopen($filePath, 'r');
+        if ($handle === false) {
+            throw new \Exception("Unable to open file: {$filePath}");
+        }
+
+        // Detect delimiter from the header line (comma / semicolon / tab)
+        $firstLine = (string) fgets($handle);
+        $commaCount = substr_count($firstLine, ',');
+        $semicolonCount = substr_count($firstLine, ';');
+        $tabCount = substr_count($firstLine, "\t");
+        $delimiter = ',';
+        if ($semicolonCount > $commaCount && $semicolonCount >= $tabCount) {
+            $delimiter = ';';
+        } elseif ($tabCount > $commaCount && $tabCount > $semicolonCount) {
+            $delimiter = "\t";
+        }
+        rewind($handle);
+
+        $rowIndex = 0;
+        $matricColumn = -1;
+        $degreeColumn = -1;
+        $nameColumn = -1;
+        $cgpaColumn = -1;
+        $graduationDateColumn = -1;
+        $graduationSessionColumn = -1;
+        $programmeColumn = -1;
+        $currentProgramme = null;
+
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $rowIndex++;
+
+            // Skip completely empty rows
+            $nonEmpty = array_filter($row, function ($cell) {
+                return trim((string) $cell) !== '';
+            });
+            if (count($nonEmpty) === 0) {
+                continue;
+            }
+
+            // First meaningful row is treated as the header
+            if ($matricColumn < 0) {
+                $headers = array_map(function ($cell) {
+                    $text = strtolower(trim((string) $cell));
+                    $text = preg_replace('/^\xEF\xBB\xBF/', '', $text);
+                    return str_replace(['_', '-'], ' ', trim((string) $text));
+                }, $row);
+
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'matric') !== false ||
+                        strpos($header, 'reg no') !== false ||
+                        (strpos($header, 'student') !== false && strpos($header, 'no') !== false)) {
+                        $matricColumn = $index;
+                        break;
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'class') !== false && strpos($header, 'degree') !== false) {
+                        $degreeColumn = $index;
+                        break;
+                    }
+                }
+                if ($degreeColumn < 0) {
+                    foreach ($headers as $index => $header) {
+                        if (strpos($header, 'degree') !== false ||
+                            strpos($header, 'grade') !== false) {
+                            $degreeColumn = $index;
+                            break;
+                        }
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'cgpa') !== false || strpos($header, 'gpa') !== false) {
+                        $cgpaColumn = $index;
+                        break;
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'graduation') !== false && strpos($header, 'date') !== false) {
+                        $graduationDateColumn = $index;
+                        break;
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'graduation') !== false && strpos($header, 'session') !== false) {
+                        $graduationSessionColumn = $index;
+                        break;
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if (strpos($header, 'programme') !== false ||
+                        strpos($header, 'program') !== false ||
+                        strpos($header, 'course of study') !== false ||
+                        (strpos($header, 'course') !== false && strpos($header, 'study') !== false)) {
+                        $programmeColumn = $index;
+                        break;
+                    }
+                }
+                foreach ($headers as $index => $header) {
+                    if ($index === $matricColumn || $index === $degreeColumn || $index === $cgpaColumn) {
+                        continue;
+                    }
+                    if ($header === 'name' ||
+                        $header === 'student name' ||
+                        $header === 'names' ||
+                        $header === 'full name' ||
+                        $header === 'surname' ||
+                        $header === 'fullname' ||
+                        $header === 'student names' ||
+                        (strpos($header, 'name') !== false && strpos($header, 'matric') === false)) {
+                        $nameColumn = $index;
+                        break;
+                    }
+                }
+
+                if ($matricColumn < 0) {
+                    fclose($handle);
+                    Log::error('CSV nerd import: matric column not found', ['headers' => $headers]);
+                    throw new \Exception('Could not find a MATRIC_NO column in the CSV header row');
+                }
+
+                Log::info('CSV nerd import: columns detected', [
+                    'matric_column' => $matricColumn,
+                    'degree_column' => $degreeColumn,
+                    'cgpa_column' => $cgpaColumn,
+                    'graduation_date_column' => $graduationDateColumn,
+                    'graduation_session_column' => $graduationSessionColumn,
+                    'name_column' => $nameColumn,
+                    'headers' => $headers
+                ]);
+                continue;
+            }
+
+            $matricNo = strtoupper(trim((string) ($row[$matricColumn] ?? '')));
+
+            // A row whose matric cell does not look like a matric number is a
+            // programme section header: lists put the programme name either in
+            // the programme column, in the (empty) matric cell, or right in the
+            // matric column (e.g. ",ENGLISH EDUCATION,,,,"). Capture it so
+            // following rows inherit the programme, then skip the header row.
+            if (!$this->looksLikeMatricNumber($matricNo)) {
+                $section = $this->detectProgrammeSection($row, $matricColumn, $nameColumn, $programmeColumn, $cgpaColumn);
+                if ($section !== null) {
+                    $currentProgramme = $section;
+                    continue;
+                }
+                // Empty matric cell and no section matched - skip the row.
+                if ($matricNo === '') {
+                    continue;
+                }
+            }
+
+            $recordProgramme = $currentProgramme;
+            if ($programmeColumn >= 0) {
+                $cellProgramme = trim((string) ($row[$programmeColumn] ?? ''));
+                if ($cellProgramme !== '') {
+                    $recordProgramme = $cellProgramme;
+                }
+            }
+
+            $record = [
+                'matric_no' => $matricNo,
+                'final_cgpa' => null,
+                'class_of_degree' => null,
+                'graduation_date' => null,
+                'graduation_session' => null,
+                'student_name' => null,
+                'programme' => $recordProgramme,
+                'source' => 'csv',
+                'row_number' => $rowIndex
+            ];
+
+            if ($nameColumn >= 0) {
+                $record['student_name'] = trim((string) ($row[$nameColumn] ?? '')) ?: null;
+            }
+            if ($cgpaColumn >= 0) {
+                $cgpa = trim((string) ($row[$cgpaColumn] ?? ''));
+                $record['final_cgpa'] = $cgpa !== '' && is_numeric($cgpa) ? round((float) $cgpa, 2) : null;
+            }
+            if ($degreeColumn >= 0) {
+                $deg = trim((string) ($row[$degreeColumn] ?? ''));
+                $record['class_of_degree'] = $deg !== '' ? $this->normalizeClassOfDegree($deg) : null;
+            }
+            if ($graduationDateColumn >= 0) {
+                $record['graduation_date'] = trim((string) ($row[$graduationDateColumn] ?? '')) ?: null;
+            }
+            if ($graduationSessionColumn >= 0) {
+                $record['graduation_session'] = trim((string) ($row[$graduationSessionColumn] ?? '')) ?: null;
+            }
+
+            $extractedData[] = $record;
+        }
+
+        fclose($handle);
+
+        // Remove duplicates based on matric_no (same as the DOCX pipeline)
+        $extractedData = $this->removeDuplicateRecords($extractedData);
+
+        Log::info('CSV nerd data extraction completed', [
+            'file_path' => $filePath,
+            'extracted_count' => count($extractedData)
+        ]);
+
+        return $extractedData;
+    }
+
+    /**
+     * Whether the value looks like a matric number (e.g. "VUG/EEC/22/8421").
+     */
+    protected function looksLikeMatricNumber(string $value): bool
+    {
+        return (bool) preg_match('/^[A-Z0-9]{2,4}\/[A-Z0-9]{2,4}\/\d{2}\/\d{3,}$/', $value);
+    }
+
+    /**
+     * Detect a programme section header from a data row whose matric cell is
+     * empty. Returns the programme text when the row clearly looks like a
+     * section header ("ENGLISH EDUCATION"), or null when it does not.
+     *
+     * @param array $row
+     * @param int $matricColumn
+     * @param int $nameColumn
+     * @param int $programmeColumn
+     * @param int $cgpaColumn
+     * @return string|null
+     */
+    protected function detectProgrammeSection(array $row, int $matricColumn, int $nameColumn, int $programmeColumn, int $cgpaColumn): ?string
+    {
+        // Explicit programme column wins when present.
+        $candidate = '';
+        if ($programmeColumn >= 0) {
+            $candidate = trim((string) ($row[$programmeColumn] ?? ''));
+        }
+
+        // Fall back to the matric cell itself (many lists put the programme
+        // name in the matric column of the section header row), then to the
+        // name cell.
+        if ($candidate === '') {
+            $candidate = trim((string) ($row[$matricColumn] ?? ''));
+        }
+        if ($candidate === '') {
+            $candidate = trim((string) ($row[$nameColumn] ?? ''));
+        }
+
+        if ($candidate === '') {
+            return null;
+        }
+
+        // Section headers carry a programme name, not a matric number.
+        if (preg_match('/([A-Za-z]{2}\/\d{2,}\/\d+)|[A-Z]{2}\/\d{2,}/', $candidate)) {
+            return null;
+        }
+
+        // A populated CGPA means this is a real student row with a missing
+        // matric, not a section header.
+        if ($cgpaColumn >= 0 && trim((string) ($row[$cgpaColumn] ?? '')) !== '') {
+            return null;
+        }
+
+        return $candidate;
+    }
+
+    /**
      * Cache key for a DOCX file, incorporating its modification time so the
      * cache is invalidated automatically whenever the file is replaced.
      */
@@ -766,6 +1050,8 @@ class DocxImportService
             'first class honour' => 'First Class',
             'first class honors' => 'First Class',
             
+            'second class honours (upper division)' => 'Second Class Upper',
+            'second class honours (lower division)' => 'Second Class Lower',
             'second class upper' => 'Second Class Upper',
             '2nd class upper' => 'Second Class Upper',
             'second class honour upper' => 'Second Class Upper',

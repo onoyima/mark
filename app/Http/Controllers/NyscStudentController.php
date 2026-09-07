@@ -10,6 +10,7 @@ use App\Models\Department;
 use App\Models\State;
 use App\Models\StudyMode;
 use App\Models\StudentNysc;
+use App\Models\StudentNerd;
 use App\Models\NyscSession;
 use App\Models\NyscPayment;
 use App\Models\NyscTempSubmission;
@@ -258,6 +259,9 @@ class NyscStudentController extends Controller
         // Update the record and mark as submitted
         $updateData['is_submitted'] = true;
         $nysc->update($updateData);
+
+        // Mirror nerd fields into the dedicated nerd table
+        $this->syncNerdRecord($nysc);
 
         // Debug: Log the updated record
         \Log::info('UpdateDetails - Updated NYSC record:', $nysc->fresh()->toArray());
@@ -596,6 +600,9 @@ class NyscStudentController extends Controller
             // Update the record with new data and mark as submitted
             $nysc->update($updateData);
 
+            // Mirror nerd fields into the dedicated nerd table
+            $this->syncNerdRecord($nysc);
+
             \Log::info('Student data submitted after payment', [
                 'student_id' => $student->id,
                 'nysc_id' => $nysc->id,
@@ -614,11 +621,131 @@ class NyscStudentController extends Controller
             'is_submitted' => true
         ]);
 
+        // Mirror nerd fields into the dedicated nerd table
+        $this->syncNerdRecord($nysc);
+
         return response()->json([
             'success' => true,
             'message' => 'Your NYSC details have been submitted successfully.',
             'data' => $nysc
         ]);
+    }
+
+    /**
+     * Mirror nerd-relevant fields from a student_nysc record into the
+     * dedicated nerd table (student_nerds). Runs whenever a student confirms
+     * or updates their details, so both tables stay in sync.
+     *
+     * @param StudentNysc $nysc
+     * @return void
+     */
+    private function syncNerdRecord(StudentNysc $nysc): void
+    {
+        try {
+            $degree = $this->normalizeNerdClassOfDegree($nysc->class_of_degree);
+
+            // Only overwrite review-managed fields when the student record has
+            // a real value, so review-applied data is not wiped by empty rows.
+            $nerdData = [
+                'nysc_session_id' => $nysc->nysc_session_id,
+                'matric_no' => $nysc->matric_no,
+                'nin' => $nysc->nin,
+                'email' => $nysc->email,
+                'phone' => $nysc->phone,
+                'fname' => $nysc->fname,
+                'mname' => $nysc->mname,
+                'lname' => $nysc->lname,
+                'gender' => $nysc->gender,
+                'dob' => $this->formatNerdDob($nysc->dob),
+                'state' => $nysc->state,
+                'course_study' => $nysc->course_study,
+                'study_mode' => $nysc->study_mode,
+                'department' => $nysc->department,
+            ];
+
+            if ($nysc->cgpa !== null && $nysc->cgpa !== '') {
+                $nerdData['cgpa'] = round((float) $nysc->cgpa, 2);
+            }
+            if ($degree !== null) {
+                $nerdData['class_of_degree'] = $degree;
+            }
+            if ($nysc->graduation_year !== null && $nysc->graduation_year !== '') {
+                $nerdData['graduation_year'] = $nysc->graduation_year;
+            }
+
+            StudentNerd::updateOrCreate(
+                ['student_id' => $nysc->student_id],
+                $nerdData
+            );
+        } catch (\Exception $e) {
+            Log::error('Failed to sync nerd record for student: ' . $nysc->student_id, ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Format a date-of-birth value to Y-m-d, handling Carbon/date strings.
+     *
+     * @param mixed $value
+     * @return string|null
+     */
+    private function formatNerdDob($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if ($value instanceof \Carbon\Carbon) {
+            return $value->format('Y-m-d');
+        }
+        if ($value instanceof \DateTime) {
+            return $value->format('Y-m-d');
+        }
+        $ts = strtotime((string) $value);
+        return $ts === false ? (string) $value : date('Y-m-d', $ts);
+    }
+
+    /**
+     * Normalize a class of degree value to one of the four canonical nerd
+     * labels used by the nerd table.
+     *
+     * @param mixed $value
+     * @return string|null
+     */
+    private function normalizeNerdClassOfDegree($value): ?string
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+
+        $lower = strtolower($value);
+
+        // First Class
+        if (preg_match('/1st class|first class/', $lower)) {
+            return 'First Class Honours';
+        }
+
+        // Second Class Upper
+        if (preg_match('/2(nd|:1|\.1|-1)|second class.*upper|upper.*second class/', $lower)) {
+            return 'Second Class Upper Division';
+        }
+
+        // Second Class Lower
+        if (preg_match('/2(:2|\.2|-2)|second class.*lower|lower.*second class/', $lower)) {
+            return 'Second Class Lower Division';
+        }
+
+        // Third Class
+        if (preg_match('/3rd class|third class/', $lower)) {
+            return 'Third Class';
+        }
+
+        // Explicit honours-only variants that contain "second class" but no
+        // upper/lower qualifier should be treated as upper division.
+        if (strpos($lower, 'second class') !== false) {
+            return 'Second Class Upper Division';
+        }
+
+        return null;
     }
 
     /**

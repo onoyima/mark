@@ -1,0 +1,55 @@
+| Programme                               | `Program_award_combined`                                              | `award_short_title` |
+| --------------------------------------- | --------------------------------------------------------------------- | ------------------- |
+| Accounting                              | Bachelor of Science (Accounting)                                      | B.Sc                |
+| Artificial Intelligence                 | Bachelor of Science (Artificial Intelligence)                         | B.Sc                |
+| Banking And Finance                     | Bachelor of Science (Banking And Finance)                             | B.Sc                |
+| Biochemistry                            | Bachelor of Science (Biochemistry)                                    | B.Sc                |
+| Biology Education                       | Bachelor of Education (Biology Education)                             | B.Ed                |
+| Biotechnology and Environmental Biology | Bachelor of Science (Biotechnology and Environmental Biology)         | B.Sc                |
+| Business Administration                 | Bachelor of Science (Business Administration)                         | B.Sc                |
+| Business Education                      | Bachelor of Education (Business Education)                            | B.Ed                |
+| Chemistry Education                     | Bachelor of Education (Chemistry Education)                           | B.Ed                |
+| Computer Engineering                    | Bachelor of Engineering (Computer Engineering)                        | B.Eng               |
+| Computer Science                        | Bachelor of Science (Computer Science)                                | B.Sc                |
+| Computer Science Education              | Bachelor of Education (Computer Science Education)                    | B.Ed                |
+| Cyber Security                          | Bachelor of Science (Cyber Security)                                  | B.Sc                |
+| Data Science                            | Bachelor of Science (Data Science)                                    | B.Sc                |
+| Economics                               | Bachelor of Science (Economics)                                       | B.Sc                |
+| Economics Education                     | Bachelor of Education (Economics Education)                           | B.Ed                |
+| Educational Management                  | Bachelor of Science (Educational Management)                          | B.Sc                |
+| Electrical and Electronic Engineering   | Bachelor of Engineering (Electrical and Electronic Engineering)       | B.Eng               |
+| English and Literary Studies            | Bachelor of Arts (English and Literary Studies)                       | B.A                 |
+| English Education                       | Bachelor of Education (English Education)                             | B.Ed                |
+| English Language                        | Bachelor of Arts (English Language)                                   | B.A                 |
+| Entrepreneurial Studies                 | Bachelor of Science (Entrepreneurial Studies)                         | B.Sc                |
+| Guidance And Counseling                 | Bachelor of Education (Guidance And Counseling)                       | B.Ed                |
+| History and International Relations     | Bachelor of Arts (History and International Relations)                | B.A                 |
+| Human Anatomy                           | Bachelor of Science (Human Anatomy)                                   | B.Sc                |
+| Human Physiology                        | Bachelor of Science (Human Physiology)                                | B.Sc                |
+| Industrial Chemistry                    | Bachelor of Science (Industrial Chemistry)                            | B.Sc                |
+| Information Systems                     | Bachelor of Science (Information Systems)                             | B.Sc                |
+| Law                                     | Bachelor of Laws (Law)                                                | LL.B                |
+| Marketing and Advertising               | Bachelor of Science (Marketing and Advertising)                       | B.Sc                |
+| Mass Communication                      | Bachelor of Science (Mass Communication)                              | B.Sc                |
+| Medical Laboratory Sciences             | Bachelor of Medical Laboratory Sciences (Medical Laboratory Sciences) | BMLS                |
+| Medicine and Surgery                    | Bachelor of Medicine, Bachelor of Surgery (Medicine and Surgery)      | MBBS                |
+| Microbiology                            | Bachelor of Science (Microbiology)                                    | B.Sc                |
+| Nursing                                 | Bachelor of Nursing Science (Nursing)                                 | BN.Sc               |
+| Peace And Conflict Studies              | Bachelor of Science (Peace And Conflict Studies)                      | B.Sc                |
+| Pharmacy                                | Doctor of Pharmacy (Pharmacy)                                         | Pharm.D             |
+| Philosophy                              | Bachelor of Philosophy (Philosophy)                                   | B.Ph                |
+| Physics Education                       | Bachelor of Education (Physics Education)                             | B.Ed                |
+| Physics with Electronics                | Bachelor of Science (Physics with Electronics)                        | B.Sc                |
+| Political Science and Diplomacy         | Bachelor of Science (Political Science and Diplomacy)                 | B.Sc                |
+| Public Administration                   | Bachelor of Science (Public Administration)                           | B.Sc                |
+| Religious Education                     | Bachelor of Education (Religious Education)                           | B.Ed                |
+| Religious Studies                       | Bachelor of Science (Religious Studies)                               | B.Sc                |
+| Sacred Philosophy                       | Bachelor of Philosophy (Sacred Philosophy)                            | B.Ph                |
+| Sacred Theology                         | Bachelor of Theology (Sacred Theology)                                | B.Th                |
+| Social Studies Education                | Bachelor of Education (Social Studies Education)                      | B.Ed                |
+| Software Engineering                    | Bachelor of Science (Software Engineering)                            | B.Sc                |
+| Theatre Arts                            | Bachelor of Arts (Theatre Arts)                                       | B.A                 |
+| Theology                                | Bachelor of Theology (Theology)                                       | B.Th                |
+
+this is the type of exported csv that i want from the nerd page
+nin,matric_no,student_email,phone_number,first_name,middle_name,surname,sex,date_of_birth,state,programme_major,award_title,award_short_title,programme_award_combined,programme_category,programme_type,class_of_degree_text,final_cgpa,graduation_session,graduation_date,grade_approval_date,admission_date,mode_of_entry,faculty_name,department_name,senate_meeting_ref,graduate_list_ref,verified_by,remarks

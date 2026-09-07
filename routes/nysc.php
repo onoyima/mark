@@ -9,6 +9,7 @@ use App\Http\Controllers\NyscDocumentController;
 use App\Http\Controllers\NyscDuplicatePaymentController;
 use App\Http\Controllers\NyscDocxImportController;
 use App\Http\Controllers\NyscCsvExportController;
+use App\Http\Controllers\NyscNerdReviewController;
 
 Route::prefix('nysc')->group(function () {
 
@@ -142,6 +143,13 @@ Route::prefix('nysc')->group(function () {
 
         // Nerd student records
         Route::get('nerd-students', [NyscAdminController::class, 'getNerdStudents']);
+
+        // Nerd review (reconcile CGPA, class of degree, graduation date/session from a file)
+        Route::get('nerd-review/matches', [NyscNerdReviewController::class, 'getNerdMatches']);
+        Route::get('nerd-review/files', [NyscNerdReviewController::class, 'getNerdFiles']);
+        Route::post('nerd-review/upload', [NyscNerdReviewController::class, 'uploadNerdFile']);
+        Route::post('nerd-review/apply', [NyscNerdReviewController::class, 'applyNerdUpdates']);
+        Route::delete('nerd-review/file', [NyscNerdReviewController::class, 'deleteNerdFile']);
         
         // CSV upload and additional settings routes
         Route::post('upload-csv', [NyscAdminController::class, 'uploadCsv']);
