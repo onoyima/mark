@@ -147,7 +147,14 @@ class NyscNerdReviewController extends Controller
                 $proposedGraduationSession = $fileGraduationSession;
                 $proposedGraduationDate = $fileGraduationDate;
 
-                $needsUpdate = $this->needsUpdate($student, $proposedCgpa, $proposedDegree, $proposedGraduationSession, $proposedGraduationDate, $extractedData['programme'] ?? null);
+                // Programme is ALWAYS the student's own programme_major — which
+                // originates from student_nysc.course_study (authoritative and
+                // correct per student). The uploaded file's programme / section
+                // header must never override a student's true course, so the
+                // proposed programme is the student's current one (no change).
+                $proposedProgramme = $student->programme_major;
+
+                $needsUpdate = $this->needsUpdate($student, $proposedCgpa, $proposedDegree, $proposedGraduationSession, $proposedGraduationDate, $proposedProgramme);
 
                 $match = [
                     'student_id' => $student->id,
@@ -155,7 +162,7 @@ class NyscNerdReviewController extends Controller
                     'matric_no' => $student->matric_no,
                     'student_name' => trim(($student->first_name ?? '') . ' ' . ($student->middle_name ?? '') . ' ' . ($student->surname ?? '')),
                     'current_programme' => $student->programme_major,
-                    'proposed_programme' => $extractedData['programme'] ?? null,
+                    'proposed_programme' => $proposedProgramme,
                     'current_cgpa' => $student->final_cgpa,
                     'proposed_cgpa' => $proposedCgpa,
                     'current_class_of_degree' => $student->class_of_degree_text,

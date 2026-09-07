@@ -182,12 +182,17 @@ programme changes via the review apply flow).
 
 - `getNerdMatches()` now includes `current_programme` / `proposed_programme` on
   each match (and `course_study` is selected from `student_nerds`).
-- `applyNerdUpdates()` now writes the approved programme into the student's
-  `course_study` when it differs (case-insensitive compare), and **re-derives**
-  the four award columns from the new programme, keeping
-  `award_title`, `award_short_title`, `programme_award_combined`, and
-  `programme_category` in sync — in the same approve-only flow as the other
-  fields.
+- **Programme is authoritative per student.** `programme_major` on the nerd
+  table comes from `student_nysc.course_study` (correct for every student). The
+  nerd review therefore sets `proposed_programme` to the student's own
+  `programme_major` rather than the uploaded file's programme / section header,
+  so the file can never mislabel a student (e.g. a "Software Engineering"
+  student was once being proposed as "English and Literary Studies" because the
+  file's section header inherited onto his row).
+- `applyNerdUpdates()` writes the approved programme into the student's
+  `course_study` when it differs, and re-derives the four award columns from it,
+  keeping `award_title`, `award_short_title`, `programme_award_combined`, and
+  `programme_category` in sync.
 
 ### 2.6 File-name and parser hardening (`ProgrammeAwardService`)
 
