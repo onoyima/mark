@@ -5077,6 +5077,16 @@ class NyscAdminController extends Controller
                 });
             }
 
+            // Session filter: an explicit session_id key always wins, and '' means
+            // ALL sessions. Only fall back to the active session when the key is
+            // absent entirely (keeps older callers' behaviour unchanged).
+            $sessionId = $request->exists('session_id')
+                ? $request->input('session_id')
+                : \App\Models\AdminSetting::get('active_session_id');
+            if ($sessionId !== null && $sessionId !== '') {
+                $query->where('student_nerds.nysc_session_id', $sessionId);
+            }
+
 $students = $query->orderBy('student_nerds.id', 'desc')->get();
 
                 $records = $students->map(function ($s) {
@@ -5222,6 +5232,15 @@ $students = $query->orderBy('student_nerds.id', 'desc')->get();
                       ->orWhere('student_nerds.nin', 'like', "%{$search}%")
                       ->orWhere('student_nerds.department_name', 'like', "%{$search}%");
                 });
+            }
+
+            // Session filter: explicit session_id key always wins, '' = ALL
+            // sessions; fall back to the active session when absent.
+            $sessionId = $request->exists('session_id')
+                ? $request->input('session_id')
+                : \App\Models\AdminSetting::get('active_session_id');
+            if ($sessionId !== null && $sessionId !== '') {
+                $query->where('student_nerds.nysc_session_id', $sessionId);
             }
 
             $students = $query->orderBy('student_nerds.id', 'desc')->get();
