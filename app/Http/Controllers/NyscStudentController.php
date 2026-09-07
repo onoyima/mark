@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Models\AdminSetting;
+use App\Services\NigeriaLocationService;
 
 class NyscStudentController extends Controller
 {
@@ -1061,6 +1062,257 @@ class NyscStudentController extends Controller
         return response()->json([
             'study_modes' => $studyModes,
         ]);
+    }
+
+    /**
+     * Canonical list of Nigerian states, for select dropdowns.
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getStates(): \Illuminate\Http\JsonResponse
+    {
+        return response()->json([
+            'states' => (new NigeriaLocationService())->states(),
+        ]);
+    }
+
+    /**
+     * Local government areas for a selected state.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getLgas(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $state = (string) $request->query('state', '');
+
+        return response()->json([
+            'state' => $state,
+            'lgas' => (new NigeriaLocationService())->lgas($state),
+        ]);
+    }
+
+    /**
+     * Fields a student may be asked to complete on their nerd record.
+     *
+     * middle_name is intentionally NOT in this list: the student already
+     * provided it during confirmation and not every student has one, so it is
+     * always shown read-only and can never be edited/filled here.
+     *
+     * @var array<string, string>
+     */
+    protected const NERD_STUDENT_EDITABLE_FIELDS = [
+        'nin',
+        'matric_no',
+        'student_email',
+        'phone_number',
+        'first_name',
+        'surname',
+        'sex',
+        'date_of_birth',
+        'state',
+        'admission_date',
+    ];
+
+    /**
+     * Fields shown on the nerd self-service page that are ALWAYS read-only.
+     * middle_name is included because the student already provided it during
+     * confirmation and not every student has one.
+     *
+     * @var array<string, string>
+     */
+    protected const NERD_STUDENT_DISPLAY_FIELDS = [
+        'middle_name',
+    ];
+
+    /**
+     * Get the authenticated student's nerd record completeness.
+     *
+     * Returns each nerd field with its current value and an "editable" flag.
+     * A field is editable ONLY when it is missing (null/empty) on the nerd
+     * record itself; anything already filled is returned read-only.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getNerdDetails(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $disabled = !AdminSetting::get('nerd_details_enabled', true);
+        if ($disabled) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nerd details update is currently disabled by the administrator.',
+                'error_code' => 'nerd_feature_disabled',
+            ], 403);
+        }
+
+        $student = $request->user();
+        $nerd = StudentNerd::where('student_id', $student->id)->first();
+
+        // Only students who already have a nerd record may access this page.
+        if (!$nerd) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No nerd record exists for this student yet.',
+                'error_code' => 'nerd_record_missing',
+            ], 403);
+        }
+
+        $fields = array_merge(self::NERD_STUDENT_EDITABLE_FIELDS, self::NERD_STUDENT_DISPLAY_FIELDS);
+
+        $result = [];
+        foreach ($fields as $field) {
+            $value = $nerd ? $nerd->{$field} : null;
+            $hasValue = $value !== null && trim((string) $value) !== '';
+            $result[$field] = [
+                'value' => $hasValue ? $value : null,
+                'is_readonly' => !$hasValue ? false : true,
+                // middle_name is always read-only; every other nerd field is
+                // editable only when it is currently missing.
+                'editable' => $field === 'middle_name' ? false : !$hasValue,
+            ];
+        }
+
+        $editableCount = count(array_filter($result, function ($f) {
+            return $f['editable'];
+        }));
+
+        return response()->json([
+            'success' => true,
+            'nerd_details_enabled' => true,
+            'data' => [
+                'exists' => $nerd !== null,
+                'fields' => $result,
+                'missing_count' => $editableCount,
+                'complete' => $editableCount === 0,
+            ]
+        ]);
+    }
+
+    /**
+     * Update ONLY the missing nerd fields for the authenticated student.
+     *
+     * This is a nerd-only, payment-free self-service: it writes exclusively to
+     * student_nerds. Already-filled nerd fields are read-only and NEVER
+     * overwritten here. student_nysc, payments and every other table are
+     * untouched.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateNerdDetails(Request $request): \Illuminate\Http\JsonResponse
+    {
+        if (!AdminSetting::get('nerd_details_enabled', true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nerd details update is currently disabled by the administrator.',
+                'error_code' => 'nerd_feature_disabled',
+            ], 403);
+        }
+
+        $student = $request->user();
+        $nerd = StudentNerd::where('student_id', $student->id)->first();
+
+        // Only students who already have a nerd record may update it here.
+        if (!$nerd) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No nerd record exists for this student yet.',
+                'error_code' => 'nerd_record_missing',
+            ], 403);
+        }
+
+        $rules = [
+            'nin' => 'nullable|digits:11',
+            'matric_no' => 'nullable|string|max:50',
+            'student_email' => 'nullable|email|max:255',
+            'phone_number' => 'nullable|string|regex:/^(?:\+?234|0)[0-9]{10}$/',
+            'first_name' => 'nullable|string|max:100',
+            'surname' => 'nullable|string|max:100',
+            'sex' => 'nullable|in:Male,Female',
+            'date_of_birth' => 'nullable|date',
+            'state' => 'nullable|string|max:100',
+            'admission_date' => 'nullable|date',
+        ];
+
+        $validated = $request->validate($rules);
+
+        $updateData = [];
+        $updatedFields = [];
+
+        foreach (self::NERD_STUDENT_EDITABLE_FIELDS as $field) {
+            $provided = $request->has($field)
+                && $request->input($field) !== null
+                && trim((string) $request->input($field)) !== '';
+            if (!$provided) {
+                continue;
+            }
+
+            // Read-only guard: only a field that is currently MISSING on the
+            // nerd record may be written. Filled values are never overwritten.
+            $current = $nerd ? trim((string) ($nerd->{$field} ?? '')) : '';
+            if ($current !== '') {
+                continue;
+            }
+
+            $value = $validated[$field];
+            if (in_array($field, ['date_of_birth', 'admission_date'], true)) {
+                $value = date('Y-m-d', strtotime((string) $value));
+            }
+
+            $updateData[$field] = $value;
+            $updatedFields[] = $field;
+        }
+
+        if (empty($updateData)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'No missing fields were provided for update.',
+                'data' => [
+                    'updated_fields' => [],
+                    'updated_count' => 0,
+                    'missing_count' => $this->nerdEditableFieldCount($student->id),
+                    'complete' => false,
+                ]
+            ]);
+        }
+
+        StudentNerd::updateOrCreate(
+            ['student_id' => $student->id],
+            $updateData
+        );
+
+        $remaining = $this->nerdEditableFieldCount($student->id);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Nerd details updated successfully.',
+            'data' => [
+                'updated_fields' => $updatedFields,
+                'updated_count' => count($updatedFields),
+                'missing_count' => $remaining,
+                'complete' => $remaining === 0,
+            ]
+        ]);
+    }
+
+    /**
+     * Count how many editable nerd fields are still missing for a student.
+     *
+     * @param  int  $studentId
+     * @return int
+     */
+    private function nerdEditableFieldCount(int $studentId): int
+    {
+        $nerd = StudentNerd::where('student_id', $studentId)->first();
+        $missing = 0;
+        foreach (self::NERD_STUDENT_EDITABLE_FIELDS as $field) {
+            $value = $nerd ? $nerd->{$field} : null;
+            if ($value === null || trim((string) $value) === '') {
+                $missing++;
+            }
+        }
+        return $missing;
     }
 
     /**

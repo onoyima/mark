@@ -53,3 +53,4 @@
 
 this is the type of exported csv that i want from the nerd page
 nin,matric_no,student_email,phone_number,first_name,middle_name,surname,sex,date_of_birth,state,programme_major,award_title,award_short_title,programme_award_combined,programme_category,programme_type,class_of_degree_text,final_cgpa,graduation_session,graduation_date,grade_approval_date,admission_date,mode_of_entry,faculty_name,department_name,senate_meeting_ref,graduate_list_ref,verified_by,remarks
+

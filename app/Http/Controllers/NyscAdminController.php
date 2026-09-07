@@ -1404,6 +1404,7 @@ class NyscAdminController extends Controller
             'contact_email' => AdminSetting::get('contact_email'),
             'contact_phone' => AdminSetting::get('contact_phone'),
             'maintenance_mode' => AdminSetting::get('maintenance_mode'),
+            'nerd_details_enabled' => AdminSetting::get('nerd_details_enabled', true),
         ];
 
         return response()->json(['settings' => $settings]);
@@ -1427,7 +1428,8 @@ class NyscAdminController extends Controller
                 'system_message' => 'sometimes|string|max:1000',
                 'contact_email' => 'sometimes|email',
                 'contact_phone' => 'sometimes|string|max:20',
-                'maintenance_mode' => 'sometimes|boolean'
+                'maintenance_mode' => 'sometimes|boolean',
+                'nerd_details_enabled' => 'sometimes|boolean'
             ]);
 
             DB::beginTransaction();
@@ -3386,6 +3388,7 @@ class NyscAdminController extends Controller
             'contact_email' => 'Contact email for support',
             'contact_phone' => 'Contact phone for support',
             'maintenance_mode' => 'System maintenance mode status',
+            'nerd_details_enabled' => 'Allow students to verify and complete their nerd records',
             'smtp_host' => 'SMTP server hostname',
             'smtp_port' => 'SMTP server port number',
             'smtp_username' => 'SMTP authentication username',
@@ -3463,6 +3466,7 @@ class NyscAdminController extends Controller
             'late_fee' => 'number',
             'system_open' => 'boolean',
             'maintenance_mode' => 'boolean',
+            'nerd_details_enabled' => 'boolean',
             'payment_deadline' => 'date',
             'smtp_port' => 'number'
         ];
@@ -3485,6 +3489,7 @@ class NyscAdminController extends Controller
             'countdown_message' => 'countdown',
             'system_open' => 'system',
             'maintenance_mode' => 'system',
+            'nerd_details_enabled' => 'system',
             'system_message' => 'system',
             'contact_email' => 'general',
             'contact_phone' => 'general',
@@ -5135,6 +5140,262 @@ $students = $query->orderBy('student_nerds.id', 'desc')->get();
                 'success' => false,
                 'message' => 'Failed to fetch nerd data',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Export nerd student records to an Excel-safe .xlsx or .csv file.
+     *
+     * The exported columns follow the exact canonical order:
+     * nin, matric_no, student_email, phone_number, first_name, middle_name,
+     * surname, sex, date_of_birth, state, programme_major, award_title,
+     * award_short_title, programme_award_combined, programme_category,
+     * programme_type, class_of_degree_text, final_cgpa, graduation_session,
+     * graduation_date, grade_approval_date, admission_date, mode_of_entry,
+     * faculty_name, department_name, senate_meeting_ref, graduate_list_ref,
+     * verified_by, remarks.
+     *
+     * Every cell is written as text (StringValueBinder) so Excel never
+     * disfigures numeric-looking values (NIN, phone, dates, CGPA). Names are
+     * uppercased, date_of_birth is dd/mm/yyyy, and states are mapped to the
+     * canonical list via NigeriaLocationService.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|\Symfony\Component\HttpFoundation\StreamedResponse|\Illuminate\Http\JsonResponse
+     */
+    public function exportNerdStudents(Request $request)
+    {
+        try {
+            $format = strtolower((string) $request->query('format', 'excel'));
+            if (!in_array($format, ['excel', 'csv'], true)) {
+                $format = 'excel';
+            }
+
+            $query = \DB::table('student_nerds')
+                ->leftJoin('student_academics', 'student_nerds.student_id', '=', 'student_academics.student_id')
+                ->leftJoin('faculties', 'student_academics.faculty_id', '=', 'faculties.id')
+                ->leftJoin('departments', 'student_academics.department_id', '=', 'departments.id')
+                ->leftJoin('entry_modes', 'student_academics.entry_mode_id', '=', 'entry_modes.id')
+                ->select(
+                    'student_nerds.nin',
+                    'student_nerds.matric_no',
+                    'student_nerds.student_email',
+                    'student_nerds.phone_number',
+                    'student_nerds.first_name',
+                    'student_nerds.middle_name',
+                    'student_nerds.surname',
+                    'student_nerds.sex',
+                    'student_nerds.date_of_birth',
+                    'student_nerds.state',
+                    'student_nerds.programme_major',
+                    'student_nerds.award_title',
+                    'student_nerds.award_short_title',
+                    'student_nerds.programme_award_combined',
+                    'student_nerds.programme_category',
+                    'student_nerds.programme_type',
+                    'student_nerds.class_of_degree_text',
+                    'student_nerds.final_cgpa',
+                    'student_nerds.graduation_session',
+                    'student_nerds.graduation_date',
+                    'student_nerds.grade_approval_date',
+                    'student_nerds.admission_date',
+                    'student_nerds.mode_of_entry',
+                    'student_nerds.faculty_name',
+                    'student_nerds.department_name',
+                    'student_nerds.senate_meeting_ref',
+                    'student_nerds.graduate_list_ref',
+                    'student_nerds.verified_by',
+                    'student_nerds.remarks',
+                    'departments.name as academics_department_name',
+                    'student_academics.admitted_date as academics_admitted_date',
+                    'faculties.name as academics_faculty_name',
+                    'entry_modes.mode as academics_mode_of_entry'
+                );
+
+            if ($request->has('search') && $request->search) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('student_nerds.matric_no', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.first_name', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.surname', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.nin', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.department_name', 'like', "%{$search}%");
+                });
+            }
+
+            $students = $query->orderBy('student_nerds.id', 'desc')->get();
+
+            $columns = [
+                'nin',
+                'matric_no',
+                'student_email',
+                'phone_number',
+                'first_name',
+                'middle_name',
+                'surname',
+                'sex',
+                'date_of_birth',
+                'state',
+                'programme_major',
+                'award_title',
+                'award_short_title',
+                'programme_award_combined',
+                'programme_category',
+                'programme_type',
+                'class_of_degree_text',
+                'final_cgpa',
+                'graduation_session',
+                'graduation_date',
+                'grade_approval_date',
+                'admission_date',
+                'mode_of_entry',
+                'faculty_name',
+                'department_name',
+                'senate_meeting_ref',
+                'graduate_list_ref',
+                'verified_by',
+                'remarks',
+            ];
+
+            $locations = new \App\Services\NigeriaLocationService();
+
+            $formatDate = function ($value) {
+                if ($value === null || trim((string) $value) === '') {
+                    return '';
+                }
+                $ts = strtotime((string) $value);
+                return $ts !== false ? date('d/m/Y', $ts) : (string) $value;
+            };
+
+            $uppercase = function ($value) {
+                return strtoupper(trim((string) $value));
+            };
+
+            $rows = $students->map(function ($s) use ($columns, $locations, $formatDate, $uppercase) {
+                $finalCgpa = $s->final_cgpa !== null && is_numeric($s->final_cgpa)
+                    ? number_format((float) $s->final_cgpa, 2, '.', '')
+                    : '';
+
+                $departmentName = trim((string) ($s->department_name ?? ''));
+                if ($departmentName === '') {
+                    $departmentName = trim((string) ($s->academics_department_name ?? ''));
+                }
+
+                $values = [
+                    (string) $s->nin,
+                    (string) $s->matric_no,
+                    (string) $s->student_email,
+                    (string) $s->phone_number,
+                    $uppercase($s->first_name),
+                    $uppercase($s->middle_name),
+                    $uppercase($s->surname),
+                    (string) $s->sex,
+                    $formatDate($s->date_of_birth),
+                    $locations->normalizeState((string) $s->state) ?? trim((string) $s->state),
+                    (string) $s->programme_major,
+                    (string) $s->award_title,
+                    (string) $s->award_short_title,
+                    (string) $s->programme_award_combined,
+                    (string) $s->programme_category,
+                    (string) $s->programme_type,
+                    (string) $s->class_of_degree_text,
+                    $finalCgpa,
+                    (string) $s->graduation_session,
+                    $formatDate($s->graduation_date),
+                    $formatDate($s->grade_approval_date),
+                    $formatDate($s->admission_date ?? $s->academics_admitted_date),
+                    (string) ($s->mode_of_entry ?? $s->academics_mode_of_entry),
+                    (string) ($s->faculty_name ?? $s->academics_faculty_name),
+                    $departmentName,
+                    (string) $s->senate_meeting_ref,
+                    (string) $s->graduate_list_ref,
+                    (string) $s->verified_by,
+                    (string) $s->remarks,
+                ];
+
+                $row = [];
+                foreach ($columns as $i => $column) {
+                    $row[$column] = $values[$i];
+                }
+                return $row;
+            });
+
+            if ($format === 'csv') {
+                // Prepend a leading apostrophe to the fields Excel would otherwise
+                // disfigure (long numeric ids, digit strings, dates, decimals) so
+                // opening the CSV in Excel keeps the raw text value intact. This
+                // mirrors the CSV convention used elsewhere in the system.
+                $protect = [
+                    0,  // nin
+                    3,  // phone_number
+                    8,  // date_of_birth
+                    17, // final_cgpa
+                    19, // graduation_date
+                    20, // grade_approval_date
+                    21, // admission_date
+                ];
+
+                $callback = function () use ($columns, $rows, $protect) {
+                    $file = fopen('php://output', 'w');
+                    fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
+                    fputcsv($file, $columns);
+                    foreach ($rows as $row) {
+                        $line = [];
+                        foreach ($columns as $i => $column) {
+                            $value = (string) ($row[$column] ?? '');
+                            if (in_array($i, $protect, true) && $value !== '') {
+                                $value = "'" . $value;
+                            }
+                            $line[] = $value;
+                        }
+                        fputcsv($file, $line);
+                    }
+                    fclose($file);
+                };
+
+                $filename = 'nerd_records_' . date('Y-m-d_His') . '.csv';
+
+                return \Illuminate\Support\Facades\Response::stream($callback, 200, [
+                    'Content-Type' => 'text/csv; charset=UTF-8',
+                    'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                    'X-Content-Type-Options' => 'nosniff',
+                ]);
+            }
+
+            $spreadsheet = new Spreadsheet();
+            \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new \PhpOffice\PhpSpreadsheet\Cell\StringValueBinder());
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('NerdRecords');
+
+            foreach ($columns as $idx => $column) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
+                $sheet->setCellValueExplicit($col . '1', $column, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            }
+
+            $rowNum = 2;
+            foreach ($rows as $row) {
+                foreach ($columns as $idx => $column) {
+                    $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($idx + 1);
+                    $sheet->setCellValueExplicit($col . $rowNum, (string) ($row[$column] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                }
+                $rowNum++;
+            }
+
+            $writer = new Xlsx($spreadsheet);
+            $filename = 'nerd_records_' . date('Y-m-d_His') . '.xlsx';
+            $tmpPath = storage_path('app/exports/' . $filename);
+            if (!is_dir(dirname($tmpPath))) {
+                @mkdir(dirname($tmpPath), 0777, true);
+            }
+            $writer->save($tmpPath);
+
+            return response()->download($tmpPath)->deleteFileAfterSend(true);
+        } catch (\Exception $e) {
+            \Log::error('Nerd students export error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to export nerd data: ' . $e->getMessage(),
             ], 500);
         }
     }

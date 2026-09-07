@@ -33,6 +33,15 @@ Route::prefix('nysc')->group(function () {
         Route::get('student/profile', [NyscStudentController::class, 'getProfile']);
         Route::put('student/profile', [NyscStudentController::class, 'updateProfile']);
         Route::get('student/study-modes', [NyscStudentController::class, 'getStudyModes']);
+
+        // Nerd-only self-service: verify & complete the student's nerd record
+        // (never touches student_nysc, payments or any other table).
+        Route::get('student/nerd-details', [NyscStudentController::class, 'getNerdDetails']);
+        Route::put('student/nerd-details', [NyscStudentController::class, 'updateNerdDetails']);
+
+        // Canonical Nigeria locations for select dropdowns (states + LGAs).
+        Route::get('locations/states', [NyscStudentController::class, 'getStates']);
+        Route::get('locations/lgas', [NyscStudentController::class, 'getLgas']);
         
         // Document management
         Route::get('student/documents', [NyscDocumentController::class, 'getDocuments']);
@@ -143,6 +152,7 @@ Route::prefix('nysc')->group(function () {
 
         // Nerd student records
         Route::get('nerd-students', [NyscAdminController::class, 'getNerdStudents']);
+        Route::get('nerd-students/export', [NyscAdminController::class, 'exportNerdStudents']);
 
         // Nerd review (reconcile CGPA, class of degree, graduation date/session from a file)
         Route::get('nerd-review/matches', [NyscNerdReviewController::class, 'getNerdMatches']);
