@@ -12,8 +12,9 @@ about what touched the tables.
 1. [Overview](#overview)
 2. [Session 1 — table setup, backfill, and the review baseline](#session-1)
 3. [Session 2 — the fixes (CGPA, programme, awards)](#session-2)
-4. [Complete list of files changed](#files)
-5. [Database change log — every table touched](#db-changes)
+4. [Session 3 — canonical nerd columns (rename, no duplicates)](#session-3)
+5. [Complete list of files changed](#files)
+6. [Database change log — every table touched](#db-changes)
 
 ---
 
@@ -46,7 +47,7 @@ data lives in its **own table**, `student_nerds`, separate from the main
   `programme_major` / `programme_type` as available, and the four award fields
   as not-available.
 
-### 1.2 The `student_nerds` table — created + backfilled (THE one DB change)
+### 1.2 The `student_nerds` table — created + backfilled
 
 A new table `student_nerds` was created on the live database and backfilled with
 **1685 rows** copied from `student_nysc`. This was done via a temp PHP script
@@ -54,13 +55,15 @@ A new table `student_nerds` was created on the live database and backfilled with
 
 - `mark/database/sql/create_student_nerds.sql`
 
-The table columns (note: all columns exist, only `created_at`/`updated_at` are
-non-nullable in practice):
+Original columns: `student_id`, `nysc_session_id`, `matric_no`, `nin`, `email`,
+`phone`, `fname`, `mname`, `lname`, `gender`, `dob`, `state`, `course_study`,
+`study_mode`, `department`, `cgpa decimal(5,2)`, `class_of_degree`,
+`graduation_year`, `graduation_date`, `created_at`, `updated_at`.
 
-`student_id`, `nysc_session_id`, `matric_no`, `nin`, `email`, `phone`, `fname`,
-`mname`, `lname`, `gender`, `dob`, `state`, `course_study`, `study_mode`,
-`department`, `cgpa decimal(5,2)`, `class_of_degree`, `graduation_year`,
-`graduation_date`, `created_at`, `updated_at`.
+> The table was later **renamed in place** to the canonical column set — see
+> [Session 3](#session-3). The final schema no longer has `email`/`fname`/…;
+> it uses `student_email`/`first_name`/… plus 8 new columns. No data was lost
+> in the rename.
 
 Backfill details:
 
@@ -72,8 +75,9 @@ Backfill details:
 - Verified on the live DB. Sample rows, e.g.:
   `5732 | VUG/HIS/21/5732 | Gabriel Tobson | 1 | 3.51 | Second Class Upper | 2025 | NULL graduation_date`.
 
-> This is the **only** table change in the whole effort, and it happened in
-> Session 1.
+> The only **create** change: `student_nerds` was created in Session 1. All
+> later structural changes to it (award columns, canonical renames) are
+> additive/data-preserving and covered in the DB change log.
 
 ### 1.3 The `StudentNerd` model
 
@@ -170,16 +174,20 @@ A new service, `mark/app/Services/ProgrammeAwardService.php`, was added. It:
   | `History and International Relations` | History and International Relations | B.A |
   | `Marketing and advertising` | Marketing and Advertising | B.Sc |
 
-`getNerdStudents()` now populates these four award fields from each student's
-programme (previously hardcoded `null`).
+`getNerdStudents()` reads these four award fields from the `student_nerds`
+table (populated by the award-columns migration/backfill and kept in sync when a
+programme changes via the review apply flow).
 
 ### 2.5 Programme flows through review → apply
 
 - `getNerdMatches()` now includes `current_programme` / `proposed_programme` on
   each match (and `course_study` is selected from `student_nerds`).
 - `applyNerdUpdates()` now writes the approved programme into the student's
-  `course_study` when it differs (case-insensitive compare), in the same approve-
-  only flow as the other fields.
+  `course_study` when it differs (case-insensitive compare), and **re-derives**
+  the four award columns from the new programme, keeping
+  `award_title`, `award_short_title`, `programme_award_combined`, and
+  `programme_category` in sync — in the same approve-only flow as the other
+  fields.
 
 ### 2.6 File-name and parser hardening (`ProgrammeAwardService`)
 
@@ -213,62 +221,175 @@ programme (previously hardcoded `null`).
 
 ---
 
+## <a name="session-3"></a>Session 3 — canonical nerd columns (rename, no duplicates)
+
+The nerd table must physically carry the canonical graduate-record columns.
+Where a column already existed under a different name it was **renamed in
+place** (data preserved) rather than duplicated; only genuinely-new columns
+were added.
+
+### 3.1 The canonical column set on `student_nerds`
+
+| # | Column (final) | How it came to exist |
+|---|----------------|----------------------|
+| 1 | `nin` | kept (existing) |
+| 2 | `matric_no` | kept (existing) |
+| 3 | `student_email` | renamed from `email` |
+| 4 | `phone_number` | renamed from `phone` |
+| 5 | `first_name` | renamed from `fname` |
+| 6 | `middle_name` | renamed from `mname` |
+| 7 | `surname` | renamed from `lname` |
+| 8 | `sex` | renamed from `gender` |
+| 9 | `date_of_birth` | renamed from `dob` |
+| 10 | `state` | kept (existing) |
+| 11 | `programme_major` | renamed from `course_study` |
+| 12 | `award_title` | kept (award migration) |
+| 13 | `award_short_title` | kept (award migration) |
+| 14 | `programme_award_combined` | kept (award migration) |
+| 15 | `programme_category` | kept (award migration) |
+| 16 | `programme_type` | renamed from `study_mode` |
+| 17 | `class_of_degree_text` | renamed from `class_of_degree` |
+| 18 | `final_cgpa` | renamed from `cgpa` (decimal(5,2)) |
+| 19 | `graduation_session` | renamed from `graduation_year` |
+| 20 | `graduation_date` | kept (existing) |
+| 21 | `grade_approval_date` | **new** (varchar, nullable) — mirrors `graduation_date` (same value, kept in sync) |
+| 22 | `admission_date` | **new** (varchar, nullable) |
+| 23 | `mode_of_entry` | **new** (varchar, nullable) |
+| 24 | `faculty_name` | **new** (varchar, nullable) |
+| 25 | `department_name` | renamed from `department` |
+| 26 | `senate_meeting_ref` | **new** (varchar, nullable) |
+| 27 | `graduate_list_ref` | **new** (varchar, nullable) |
+| 28 | `verified_by` | **new** (varchar, nullable) |
+| 29 | `remarks` | **new** (text, nullable) |
+| 30 | `updated_at` / `created_at` | kept (timestamps) |
+
+Plus infrastructure columns `id`, `student_id`, `nysc_session_id`.
+
+### 3.2 How the rename was done (migration)
+
+`mark/database/migrations/2026_09_07_140000_canonicalize_student_nerds_columns.php`
+
+- Performs 13 data-preserving `ALTER TABLE student_nerds CHANGE ...` renames
+  (guarded with `Schema::hasColumn` so it is idempotent and never errors if a
+  column was already renamed or never existed).
+- Adds the 8 new columns (each guarded by `hasColumn`).
+- One-time read-only backfill: `admission_date`, `faculty_name`,
+  `mode_of_entry` are copied from the academics tables (left-joins keyed on
+  `matric_no` — `student_academics.matric_no` is the point of contact with
+  `student_nerds.matric_no`) for rows where they are null — nothing else is
+  modified.
+- `down()` reverses only what this migration did.
+
+The award-columns migration
+(`2026_09_07_131354_add_award_fields_to_student_nerds.php`) was also made
+idempotent (guards around `ADD COLUMN`, reads `course_study` **or**
+`programme_major` depending on which exists, backfills only where
+`award_title` is null).
+
+### 3.3 Code updated to the canonical names
+
+- `app/Models/StudentNerd.php` — `$fillable` + `final_cgpa` cast.
+- `NyscAdminController::getNerdStudents()` — selects the canonical columns
+  directly (aliases no longer needed); keep the academics joins **only as
+  fallbacks** (`academics_department_name`, `academics_admitted_date`,
+  `academics_faculty_name`, `academics_mode_of_entry`); search uses
+  `first_name`/`surname`/`department_name`.
+- `NyscNerdReviewController` — `getNerdMatches`, `applyNerdUpdates`,
+  `needsUpdate` all use the canonical names; `applyNerdUpdates` also keeps the
+  stored `department_name` in sync with the programme resolved from
+  `programme_award.txt` when the programme changes.
+- `NyscStudentController::syncNerdRecord()` — mirrors `student_nysc` (read)
+  into `student_nerds` (write) using the canonical keys. `student_nysc` itself
+  is not touched.
+- `database/sql/backfill_student_nerds_awards.php` — reads `programme_major`.
+- `database/sql/create_student_nerds.sql` — rewritten with the canonical schema.
+
+### 3.4 NYSC untouched
+
+Only `student_nerds` and the nerd-flow code change. `student_nysc`, the NYSC
+payment/export/import flows, and all NYSC-related tables are read-only (or
+untouched) as far as this module is concerned.
+
+---
+
 ## <a name="files"></a>Complete list of files changed
 
-Across **both** sessions:
+Across **all** sessions:
 
 ### Backend (PHP) — `mark/`
 - `app/Services/ProgrammeAwardService.php` — **new** service (award derivation).
 - `app/Models/StudentNerd.php` — model for `student_nerds` (Session 1).
 - `app/Services/DocxImportService.php` — CSV programme/degree parsing (Session 2).
-- `app/Http/Controllers/NyscAdminController.php` — CGPA fix + award fields.
-- `app/Http/Controllers/NyscNerdReviewController.php` — review/apply + programme.
+- `app/Http/Controllers/NyscAdminController.php` — CGPA fix, award fields,
+  department reconciliation.
+- `app/Http/Controllers/NyscNerdReviewController.php` — review/apply + programme
+  + award persistence.
 - `database/sql/create_student_nerds.sql` — **new** SQL file capturing the
   Session 1 table creation + backfill (for reference/re-import).
+- `database/sql/backfill_student_nerds_awards.php` — **new** one-time backfill
+  runner for the award columns.
+- `database/sql/backfill_student_nerds_canonical.php` — **new** one-time data
+  backfill (awards on missing rows, academics fields keyed on `matric_no`,
+  grade_approval_date sync).
+- `database/migrations/2026_09_07_131354_add_award_fields_to_student_nerds.php`
+  — **new** migration adding the 4 award columns + backfilling. Made
+  idempotent (hasColumn guards) in Session 3.
+- `database/migrations/2026_09_07_140000_canonicalize_student_nerds_columns.php`
+  — **new** data-preserving rename of 13 columns to canonical names + adds 8
+  new columns + one-time academics backfill.
 
 ### Frontend (Next.js / TypeScript) — `NYSC_UPDATE_FRONT/`
 - `components/admin/NerdReviewTable.tsx`
 - `app/admin/nerd-review/page.tsx`
 - `app/admin/nerd/page.tsx`
 
-No migration files were created or run (Laravel migrations under
-`database/migrations` were not touched in either session).
+The migrations under `database/migrations` are the mechanism for applying the
+structural changes to `student_nerds`:
+`2026_09_05_000000_create_student_nerds_table.php`,
+`2026_09_07_131354_add_award_fields_to_student_nerds.php`, and
+`2026_09_07_140000_canonicalize_student_nerds_columns.php`. They only ever
+touch `student_nerds`.
 
 ---
 
 ## <a name="db-changes"></a>Database change log — every table touched
 
-This is the complete, honest record of **every** database operation across both
-sessions.
+This is the complete, honest record of **every** database operation across all
+sessions (including the user-approved award columns and canonical rename).
 
 | When | Operation | Table(s) | Notes |
 |------|-----------|----------|-------|
 | Session 1 | `CREATE TABLE IF NOT EXISTS` | `student_nerds` | New table created. |
 | Session 1 | `INSERT ... SELECT ... WHERE NOT EXISTS` | `student_nerds` | Backfilled 1685 rows from `student_nysc`. Idempotent. |
-| Session 2 | **None** | — | No DDL, no DML executed. |
+| Session 2a | `ALTER TABLE ADD COLUMN` | `student_nerds` | User-approved: added `award_title`, `award_short_title`, `programme_award_combined`, `programme_category`. |
+| Session 2a | `UPDATE` (award backfill) | `student_nerds` | Populated the 4 award columns from `programme_major` via `ProgrammeAwardService`. |
+| Session 3 | 13 × `ALTER TABLE ... CHANGE` renames | `student_nerds` | Data-preserving rename to canonical column names. |
+| Session 3 | `ALTER TABLE ADD COLUMN` (×8) | `student_nerds` | Added 8 new columns (grade_approval_date — mirrors graduation_date, admission_date, mode_of_entry, faculty_name, senate_meeting_ref, graduate_list_ref, verified_by, remarks). |
+| Session 3 | `UPDATE` (academics backfill) | `student_nerds` | One-time read-only copy of admission_date/faculty_name/mode_of_entry from academics tables keyed on `matric_no`; syncs grade_approval_date = graduation_date. `updated_at` refreshed. |
+| Session 2b | **None** | — | Code-only changes (CGPA, programme extraction, export, frontend). |
 | Going forward | Runtime writes (approve flow only) | `student_nerds` | Only via `applyNerdUpdates`, only for user-approved rows. |
 
 **What was NOT touched (ever):**
 
-- `student_nysc` — read from during the one-time backfill, **never written or
-  altered**.
+- `student_nysc` — read from during the one-time backfill (Session 1) and
+  always read-only by `syncNerdRecord` and the academics fallback in
+  `getNerdStudents`. Never written or altered.
 - `course_regs` — previously *read* by `getNerdStudents` for the CGPA
   recalculation; that read has now been **removed** entirely.
-- No `ALTER TABLE`, no indexes/constraints added, no migrations added or run.
-- No column was added, dropped, or renamed in any table.
+- No `ALTER TABLE` or `UPDATE` on any table other than `student_nerds`. The
+  renames were data-preserving `CHANGE` operations on `student_nerds` columns
+  only. No indexes/constraints were added, removed, or changed on any table.
 
 **What happens going forward:**
 
 - All runtime writes go to the existing `student_nerds` table and only its
-  **existing** columns: `cgpa`, `class_of_degree`, `graduation_year`,
-  `graduation_date`, `course_study`.
+  canonical columns: `final_cgpa`, `class_of_degree_text`, `graduation_session`,
+  `graduation_date`, `programme_major`, `department_name`, plus the award
+  columns and any of the new columns that were added. All kept consistent
+  whenever the programme changes via the review apply flow.
 - Writes only occur when an admin **approves** rows in the review UI and clicks
   "Apply Updates".
-- Nothing in the changed code contains `CREATE`, `ALTER`, or `DROP`. No schema
-  change is made at runtime, and no table other than `student_nerds` is written
-  to.
-
-In short: the **only** structural change in the entire effort was creating the
-`student_nerds` table (plus its one-time backfill) in Session 1. That table is
-the dedicated, sandboxed home for nerd data; the primary `student_nysc` table
-and all others are left untouched.
+- Nothing in the changed code contains `CREATE`, `ALTER`, or `DROP` at runtime.
+  The only structural changes are the Session 1 table creation, the
+  user-approved award columns, and the Session 3 canonical renames + new
+  columns — all via offline migrations.

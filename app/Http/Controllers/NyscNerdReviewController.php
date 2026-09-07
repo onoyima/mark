@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Services\DocxImportService;
+use App\Services\ProgrammeAwardService;
 use App\Models\AdminSetting;
 use App\Models\StudentNerd;
 use App\Models\NyscSession;
@@ -90,9 +91,9 @@ class NyscNerdReviewController extends Controller
             // Students currently in the student_nerds table for this session.
             $sessionId = $this->fileSessionId($currentFileName) ?: AdminSetting::get('active_session_id');
             $query = StudentNerd::select([
-                'id', 'student_id', 'matric_no', 'fname', 'mname', 'lname',
-                'cgpa', 'class_of_degree', 'graduation_year', 'graduation_date',
-                'course_study'
+                'id', 'student_id', 'matric_no', 'first_name', 'middle_name', 'surname',
+                'final_cgpa', 'class_of_degree_text', 'graduation_session', 'graduation_date',
+                'programme_major'
             ]);
             if ($sessionId) {
                 $query->where('nysc_session_id', $sessionId);
@@ -146,20 +147,20 @@ class NyscNerdReviewController extends Controller
                 $proposedGraduationSession = $fileGraduationSession;
                 $proposedGraduationDate = $fileGraduationDate;
 
-                $needsUpdate = $this->needsUpdate($student, $proposedCgpa, $proposedDegree, $proposedGraduationSession, $proposedGraduationDate);
+                $needsUpdate = $this->needsUpdate($student, $proposedCgpa, $proposedDegree, $proposedGraduationSession, $proposedGraduationDate, $extractedData['programme'] ?? null);
 
                 $match = [
                     'student_id' => $student->id,
                     'nerd_student_id' => $student->id,
                     'matric_no' => $student->matric_no,
-                    'student_name' => trim(($student->fname ?? '') . ' ' . ($student->mname ?? '') . ' ' . ($student->lname ?? '')),
-                    'current_programme' => $student->course_study,
+                    'student_name' => trim(($student->first_name ?? '') . ' ' . ($student->middle_name ?? '') . ' ' . ($student->surname ?? '')),
+                    'current_programme' => $student->programme_major,
                     'proposed_programme' => $extractedData['programme'] ?? null,
-                    'current_cgpa' => $student->cgpa,
+                    'current_cgpa' => $student->final_cgpa,
                     'proposed_cgpa' => $proposedCgpa,
-                    'current_class_of_degree' => $student->class_of_degree,
+                    'current_class_of_degree' => $student->class_of_degree_text,
                     'proposed_class_of_degree' => $proposedDegree,
-                    'current_graduation_session' => $student->graduation_year,
+                    'current_graduation_session' => $student->graduation_session,
                     'proposed_graduation_session' => $proposedGraduationSession,
                     'current_graduation_date' => $student->graduation_date,
                     'proposed_graduation_date' => $proposedGraduationDate,
@@ -460,36 +461,70 @@ class NyscNerdReviewController extends Controller
                             ? $update['proposed_graduation_session']
                             : $fileGraduationSession;
 
-                        $currentCgpa = $student->cgpa !== null ? round((float) $student->cgpa, 2) : null;
-                        $currentDegree = ($student->class_of_degree ?? '') !== '' ? $student->class_of_degree : null;
+                        $currentCgpa = $student->final_cgpa !== null ? round((float) $student->final_cgpa, 2) : null;
+                        $currentDegree = ($student->class_of_degree_text ?? '') !== '' ? $student->class_of_degree_text : null;
                         $currentGraduationDate = ($student->graduation_date ?? '') !== '' ? $student->graduation_date : null;
-                        $currentSession = ($student->graduation_year ?? '') !== '' ? $student->graduation_year : null;
-                        $currentProgramme = ($student->course_study ?? '') !== '' ? trim((string) $student->course_study) : null;
+                        $currentSession = ($student->graduation_session ?? '') !== '' ? $student->graduation_session : null;
+                        $currentProgramme = ($student->programme_major ?? '') !== '' ? trim((string) $student->programme_major) : null;
                         $proposedProgramme = isset($update['proposed_programme']) && trim((string) $update['proposed_programme']) !== ''
                             ? trim((string) $update['proposed_programme'])
                             : null;
+                        $currentAwardTitle = ($student->award_title ?? '') !== '' ? $student->award_title : null;
+                        $currentAwardShort = ($student->award_short_title ?? '') !== '' ? $student->award_short_title : null;
+                        $currentAwardCombined = ($student->programme_award_combined ?? '') !== '' ? $student->programme_award_combined : null;
+                        $currentAwardCategory = ($student->programme_category ?? '') !== '' ? $student->programme_category : null;
 
                         $changed = false;
 
                         if ($proposedProgramme !== null && strtoupper($proposedProgramme) !== strtoupper((string) $currentProgramme)) {
-                            $student->course_study = $proposedProgramme;
+                            $student->programme_major = $proposedProgramme;
+                            $award = (new ProgrammeAwardService())->resolve($proposedProgramme);
+                            $proposedAwardTitle = $award['award_title'] ?? null;
+                            $proposedAwardShort = $award['award_short_title'] ?? null;
+                            $proposedAwardCombined = $award['programme_award_combined'] ?? null;
+                            $proposedAwardCategory = $award['programme_category'] ?? null;
+                            if ($proposedAwardTitle !== $currentAwardTitle) {
+                                $student->award_title = $proposedAwardTitle;
+                                $changed = true;
+                            }
+                            if ($proposedAwardShort !== $currentAwardShort) {
+                                $student->award_short_title = $proposedAwardShort;
+                                $changed = true;
+                            }
+                            if ($proposedAwardCombined !== $currentAwardCombined) {
+                                $student->programme_award_combined = $proposedAwardCombined;
+                                $changed = true;
+                            }
+                            if ($proposedAwardCategory !== $currentAwardCategory) {
+                                $student->programme_category = $proposedAwardCategory;
+                                $changed = true;
+                            }
+                            // Keep the stored department in sync with the programme
+                            // list in programme_award.txt.
+                            $proposedDepartment = ($award['programme'] ?? '') !== '' ? $award['programme'] : $proposedProgramme;
+                            if ($proposedDepartment !== $student->department_name) {
+                                $student->department_name = $proposedDepartment;
+                                $changed = true;
+                            }
                             $changed = true;
                         }
 
                         if ($proposedCgpa !== $currentCgpa) {
-                            $student->cgpa = $proposedCgpa;
+                            $student->final_cgpa = $proposedCgpa;
                             $changed = true;
                         }
                         if ($proposedDegree !== $currentDegree) {
-                            $student->class_of_degree = $proposedDegree;
+                            $student->class_of_degree_text = $proposedDegree;
                             $changed = true;
                         }
                         if ($proposedGraduationDate !== $currentGraduationDate) {
                             $student->graduation_date = $proposedGraduationDate;
+                            // grade_approval_date mirrors graduation_date.
+                            $student->grade_approval_date = $proposedGraduationDate;
                             $changed = true;
                         }
                         if ($proposedSession !== $currentSession) {
-                            $student->graduation_year = $proposedSession;
+                            $student->graduation_session = $proposedSession;
                             $changed = true;
                         }
 
@@ -556,14 +591,16 @@ class NyscNerdReviewController extends Controller
      * @param string|null $proposedDegree
      * @param string|null $proposedGraduationSession
      * @param string|null $proposedGraduationDate
+     * @param string|null $proposedProgramme
      * @return bool
      */
-    private function needsUpdate(StudentNerd $student, ?float $proposedCgpa, ?string $proposedDegree, ?string $proposedGraduationSession, ?string $proposedGraduationDate): bool
+    private function needsUpdate(StudentNerd $student, ?float $proposedCgpa, ?string $proposedDegree, ?string $proposedGraduationSession, ?string $proposedGraduationDate, ?string $proposedProgramme = null): bool
     {
-        $currentCgpa = $student->cgpa !== null ? round((float) $student->cgpa, 2) : null;
-        $currentDegree = ($student->class_of_degree ?? '') !== '' ? $student->class_of_degree : null;
+        $currentCgpa = $student->final_cgpa !== null ? round((float) $student->final_cgpa, 2) : null;
+        $currentDegree = ($student->class_of_degree_text ?? '') !== '' ? $student->class_of_degree_text : null;
         $currentGraduationDate = ($student->graduation_date ?? '') !== '' ? $student->graduation_date : null;
-        $currentSession = ($student->graduation_year ?? '') !== '' ? $student->graduation_year : null;
+        $currentSession = ($student->graduation_session ?? '') !== '' ? $student->graduation_session : null;
+        $currentProgramme = ($student->programme_major ?? '') !== '' ? trim((string) $student->programme_major) : null;
 
         if ($proposedCgpa !== $currentCgpa) {
             return true;
@@ -575,6 +612,9 @@ class NyscNerdReviewController extends Controller
             return true;
         }
         if ($proposedGraduationSession !== $currentSession) {
+            return true;
+        }
+        if ($proposedProgramme !== null && strtoupper($proposedProgramme) !== strtoupper((string) $currentProgramme)) {
             return true;
         }
         return false;

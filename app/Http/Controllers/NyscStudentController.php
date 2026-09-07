@@ -650,27 +650,27 @@ class NyscStudentController extends Controller
                 'nysc_session_id' => $nysc->nysc_session_id,
                 'matric_no' => $nysc->matric_no,
                 'nin' => $nysc->nin,
-                'email' => $nysc->email,
-                'phone' => $nysc->phone,
-                'fname' => $nysc->fname,
-                'mname' => $nysc->mname,
-                'lname' => $nysc->lname,
-                'gender' => $nysc->gender,
-                'dob' => $this->formatNerdDob($nysc->dob),
+                'student_email' => $nysc->email,
+                'phone_number' => $nysc->phone,
+                'first_name' => $nysc->fname,
+                'middle_name' => $nysc->mname,
+                'surname' => $nysc->lname,
+                'sex' => $nysc->gender,
+                'date_of_birth' => $this->formatNerdDob($nysc->dob),
                 'state' => $nysc->state,
-                'course_study' => $nysc->course_study,
-                'study_mode' => $nysc->study_mode,
-                'department' => $nysc->department,
+                'programme_major' => $nysc->course_study,
+                'programme_type' => $nysc->study_mode,
+                'department_name' => $nysc->department,
             ];
 
             if ($nysc->cgpa !== null && $nysc->cgpa !== '') {
-                $nerdData['cgpa'] = round((float) $nysc->cgpa, 2);
+                $nerdData['final_cgpa'] = round((float) $nysc->cgpa, 2);
             }
             if ($degree !== null) {
-                $nerdData['class_of_degree'] = $degree;
+                $nerdData['class_of_degree_text'] = $degree;
             }
             if ($nysc->graduation_year !== null && $nysc->graduation_year !== '') {
-                $nerdData['graduation_year'] = $nysc->graduation_year;
+                $nerdData['graduation_session'] = $nysc->graduation_year;
             }
 
             StudentNerd::updateOrCreate(

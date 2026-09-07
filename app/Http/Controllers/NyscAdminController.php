@@ -5027,25 +5027,37 @@ class NyscAdminController extends Controller
                 ->select(
                     'student_nerds.nin',
                     'student_nerds.matric_no',
-                    'student_nerds.email as student_email',
-                    'student_nerds.phone as phone_number',
-                    'student_nerds.fname as first_name',
-                    'student_nerds.mname as middle_name',
-                    'student_nerds.lname as surname',
-                    'student_nerds.gender as sex',
-                    'student_nerds.dob as date_of_birth',
+                    'student_nerds.student_email',
+                    'student_nerds.phone_number',
+                    'student_nerds.first_name',
+                    'student_nerds.middle_name',
+                    'student_nerds.surname',
+                    'student_nerds.sex',
+                    'student_nerds.date_of_birth',
                     'student_nerds.state',
-                    'student_nerds.course_study as programme_major',
-                    'student_nerds.class_of_degree as class_of_degree_text',
-                    'student_nerds.cgpa as final_cgpa',
-                    'student_nerds.graduation_year as graduation_session',
-                    'student_nerds.graduation_date as graduation_date',
-                    'student_nerds.study_mode as programme_type',
-                    'student_nerds.department as department_name',
-                    'student_academics.admitted_date as admission_date',
-                    'faculties.name as faculty_name',
-                    'departments.name as department_from_academics',
-                    'entry_modes.mode as mode_of_entry_name'
+                    'student_nerds.programme_major',
+                    'student_nerds.award_title',
+                    'student_nerds.award_short_title',
+                    'student_nerds.programme_award_combined',
+                    'student_nerds.programme_category',
+                    'student_nerds.programme_type',
+                    'student_nerds.class_of_degree_text',
+                    'student_nerds.final_cgpa',
+                    'student_nerds.graduation_session',
+                    'student_nerds.graduation_date',
+                    'student_nerds.grade_approval_date',
+                    'student_nerds.admission_date',
+                    'student_nerds.mode_of_entry',
+                    'student_nerds.faculty_name',
+                    'student_nerds.department_name',
+                    'student_nerds.senate_meeting_ref',
+                    'student_nerds.graduate_list_ref',
+                    'student_nerds.verified_by',
+                    'student_nerds.remarks',
+                    'departments.name as academics_department_name',
+                    'student_academics.admitted_date as academics_admitted_date',
+                    'faculties.name as academics_faculty_name',
+                    'entry_modes.mode as academics_mode_of_entry'
                 );
 
             // Search
@@ -5053,10 +5065,10 @@ class NyscAdminController extends Controller
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
                     $q->where('student_nerds.matric_no', 'like', "%{$search}%")
-                      ->orWhere('student_nerds.fname', 'like', "%{$search}%")
-                      ->orWhere('student_nerds.lname', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.first_name', 'like', "%{$search}%")
+                      ->orWhere('student_nerds.surname', 'like', "%{$search}%")
                       ->orWhere('student_nerds.nin', 'like', "%{$search}%")
-                      ->orWhere('student_nerds.department', 'like', "%{$search}%");
+                      ->orWhere('student_nerds.department_name', 'like', "%{$search}%");
                 });
             }
 
@@ -5064,7 +5076,21 @@ $students = $query->orderBy('student_nerds.id', 'desc')->get();
 
                 $records = $students->map(function ($s) {
                 $finalCgpa = $s->final_cgpa !== null ? round((float) $s->final_cgpa, 2) : null;
+
+                // Department: reconcile the stored value with the programme list
+                // in programme_award.txt. When the student's programme_major
+                // resolves to a canonical programme, that becomes the department
+                // (the nerd files' DEPARTMENT column holds the same programme
+                // names). Otherwise fall back to the stored value, then to the
+                // academics department name.
                 $award = (new ProgrammeAwardService())->resolve($s->programme_major);
+                $departmentResolved = ($award['programme'] ?? '') !== ''
+                    ? $award['programme']
+                    : null;
+                $departmentName = $departmentResolved
+                    ?? $s->department_name
+                    ?? $s->academics_department_name;
+
                 return [
                     'nin' => $s->nin,
                     'matric_no' => $s->matric_no,
@@ -5077,24 +5103,24 @@ $students = $query->orderBy('student_nerds.id', 'desc')->get();
                     'date_of_birth' => $s->date_of_birth,
                     'state' => $s->state,
                     'programme_major' => $s->programme_major,
-                    'award_title' => $award['award_title'] ?? null,
-                    'award_short_title' => $award['award_short_title'] ?? null,
-                    'programme_award_combined' => $award['programme_award_combined'] ?? null,
-                    'programme_category' => $award['programme_category'] ?? null,
+                    'award_title' => $s->award_title,
+                    'award_short_title' => $s->award_short_title,
+                    'programme_award_combined' => $s->programme_award_combined,
+                    'programme_category' => $s->programme_category,
                     'programme_type' => $s->programme_type,
                     'class_of_degree_text' => $s->class_of_degree_text,
                     'final_cgpa' => $finalCgpa,
                     'graduation_session' => $s->graduation_session,
                     'graduation_date' => $s->graduation_date,
-                    'grade_approval_date' => null,
-                    'admission_date' => $s->admission_date,
-                    'mode_of_entry' => $s->mode_of_entry_name,
-                    'faculty_name' => $s->faculty_name,
-                    'department_name' => $s->department_name ?? $s->department_from_academics,
-                    'senate_meeting_ref' => null,
-                    'graduate_list_ref' => null,
-                    'verified_by' => null,
-                    'remarks' => null,
+                    'grade_approval_date' => $s->grade_approval_date,
+                    'admission_date' => $s->admission_date ?? $s->academics_admitted_date,
+                    'mode_of_entry' => $s->mode_of_entry ?? $s->academics_mode_of_entry,
+                    'faculty_name' => $s->faculty_name ?? $s->academics_faculty_name,
+                    'department_name' => $departmentName,
+                    'senate_meeting_ref' => $s->senate_meeting_ref,
+                    'graduate_list_ref' => $s->graduate_list_ref,
+                    'verified_by' => $s->verified_by,
+                    'remarks' => $s->remarks,
                 ];
             });
 
