@@ -1103,11 +1103,6 @@ class NyscStudentController extends Controller
      */
     protected const NERD_STUDENT_EDITABLE_FIELDS = [
         'nin',
-        'matric_no',
-        'student_email',
-        'phone_number',
-        'first_name',
-        'surname',
         'sex',
         'date_of_birth',
         'state',
@@ -1116,21 +1111,28 @@ class NyscStudentController extends Controller
 
     /**
      * Fields shown on the nerd self-service page that are ALWAYS read-only.
-     * middle_name is included because the student already provided it during
-     * confirmation and not every student has one.
+     * Students can view these but can never edit them; they are supplied from
+     * official records (e.g. matric number, email, phone, first name, surname)
+     * or already provided during confirmation (middle_name).
      *
      * @var array<string, string>
      */
     protected const NERD_STUDENT_DISPLAY_FIELDS = [
+        'matric_no',
+        'student_email',
+        'phone_number',
+        'first_name',
         'middle_name',
+        'surname',
     ];
 
     /**
      * Get the authenticated student's nerd record completeness.
      *
-     * Returns each nerd field with its current value and an "editable" flag.
-     * A field is editable ONLY when it is missing (null/empty) on the nerd
-     * record itself; anything already filled is returned read-only.
+     * Returns each nerd field with its current value. Any field the student can
+     * SEE on the self-service page (everything except the always read-only
+     * display fields) is marked editable, so a student can correct a filled
+     * field — but only ONE field at a time via updateNerdDetails.
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
@@ -1164,17 +1166,20 @@ class NyscStudentController extends Controller
         foreach ($fields as $field) {
             $value = $nerd ? $nerd->{$field} : null;
             $hasValue = $value !== null && trim((string) $value) !== '';
+            $isAlwaysReadOnly = in_array($field, self::NERD_STUDENT_DISPLAY_FIELDS, true);
             $result[$field] = [
                 'value' => $hasValue ? $value : null,
-                'is_readonly' => !$hasValue ? false : true,
-                // middle_name is always read-only; every other nerd field is
-                // editable only when it is currently missing.
-                'editable' => $field === 'middle_name' ? false : !$hasValue,
+                // Only middle_name is permanently read-only. Every other visible
+                // field may be corrected (one field at a time), whether filled or
+                // still missing.
+                'is_readonly' => $isAlwaysReadOnly,
+                'editable' => !$isAlwaysReadOnly,
+                'missing' => !$hasValue,
             ];
         }
 
-        $editableCount = count(array_filter($result, function ($f) {
-            return $f['editable'];
+        $missingCount = count(array_filter($result, function ($f) {
+            return $f['missing'];
         }));
 
         return response()->json([
@@ -1183,19 +1188,20 @@ class NyscStudentController extends Controller
             'data' => [
                 'exists' => $nerd !== null,
                 'fields' => $result,
-                'missing_count' => $editableCount,
-                'complete' => $editableCount === 0,
+                'missing_count' => $missingCount,
+                'complete' => $missingCount === 0,
             ]
         ]);
     }
 
     /**
-     * Update ONLY the missing nerd fields for the authenticated student.
+     * Correct ONE field at a time on the authenticated student's nerd record.
      *
      * This is a nerd-only, payment-free self-service: it writes exclusively to
-     * student_nerds. Already-filled nerd fields are read-only and NEVER
-     * overwritten here. student_nysc, payments and every other table are
-     * untouched.
+     * student_nerds and can only touch the visible fields a student can see
+     * (anything except the always read-only middle_name). Corrections are
+     * strictly limited to a single field per request. student_nysc, payments
+     * and every other table are untouched.
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
@@ -1224,11 +1230,6 @@ class NyscStudentController extends Controller
 
         $rules = [
             'nin' => 'nullable|digits:11',
-            'matric_no' => 'nullable|string|max:50',
-            'student_email' => 'nullable|email|max:255',
-            'phone_number' => 'nullable|string|regex:/^(?:\+?234|0)[0-9]{10}$/',
-            'first_name' => 'nullable|string|max:100',
-            'surname' => 'nullable|string|max:100',
             'sex' => 'nullable|in:Male,Female',
             'date_of_birth' => 'nullable|date',
             'state' => 'nullable|string|max:100',
@@ -1237,59 +1238,61 @@ class NyscStudentController extends Controller
 
         $validated = $request->validate($rules);
 
-        $updateData = [];
-        $updatedFields = [];
-
+        // Exactly ONE field per request — a single correction at a time.
+        $providedFields = [];
         foreach (self::NERD_STUDENT_EDITABLE_FIELDS as $field) {
             $provided = $request->has($field)
                 && $request->input($field) !== null
                 && trim((string) $request->input($field)) !== '';
-            if (!$provided) {
-                continue;
+            if ($provided) {
+                $providedFields[] = $field;
             }
-
-            // Read-only guard: only a field that is currently MISSING on the
-            // nerd record may be written. Filled values are never overwritten.
-            $current = $nerd ? trim((string) ($nerd->{$field} ?? '')) : '';
-            if ($current !== '') {
-                continue;
-            }
-
-            $value = $validated[$field];
-            if (in_array($field, ['date_of_birth', 'admission_date'], true)) {
-                $value = date('Y-m-d', strtotime((string) $value));
-            }
-
-            $updateData[$field] = $value;
-            $updatedFields[] = $field;
         }
 
-        if (empty($updateData)) {
+        if (count($providedFields) === 0) {
             return response()->json([
-                'success' => true,
-                'message' => 'No missing fields were provided for update.',
+                'success' => false,
+                'message' => 'Provide the one field you want to correct.',
                 'data' => [
                     'updated_fields' => [],
                     'updated_count' => 0,
                     'missing_count' => $this->nerdEditableFieldCount($student->id),
-                    'complete' => false,
-                ]
-            ]);
+                    'complete' => $this->nerdEditableFieldCount($student->id) === 0,
+                ],
+            ], 422);
+        }
+
+        if (count($providedFields) > 1) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only one field may be updated at a time. Correct one field, save, then correct the next.',
+                'data' => [
+                    'updated_fields' => [],
+                    'updated_count' => 0,
+                    'provided' => $providedFields,
+                ],
+            ], 422);
+        }
+
+        $field = $providedFields[0];
+        $value = $validated[$field];
+        if (in_array($field, ['date_of_birth', 'admission_date'], true)) {
+            $value = date('Y-m-d', strtotime((string) $value));
         }
 
         StudentNerd::updateOrCreate(
             ['student_id' => $student->id],
-            $updateData
+            [$field => $value]
         );
 
         $remaining = $this->nerdEditableFieldCount($student->id);
 
         return response()->json([
             'success' => true,
-            'message' => 'Nerd details updated successfully.',
+            'message' => 'Your ' . str_replace('_', ' ', $field) . ' was corrected successfully.',
             'data' => [
-                'updated_fields' => $updatedFields,
-                'updated_count' => count($updatedFields),
+                'updated_fields' => [$field],
+                'updated_count' => 1,
                 'missing_count' => $remaining,
                 'complete' => $remaining === 0,
             ]
