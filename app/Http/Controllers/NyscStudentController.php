@@ -1169,18 +1169,19 @@ class NyscStudentController extends Controller
             $isAlwaysReadOnly = in_array($field, self::NERD_STUDENT_DISPLAY_FIELDS, true);
             $result[$field] = [
                 'value' => $hasValue ? $value : null,
-                // Only middle_name is permanently read-only. Every other visible
-                // field may be corrected (one field at a time), whether filled or
-                // still missing.
+                // Read-only display fields can never be corrected here; the
+                // student-editable fields may be corrected one at a time,
+                // whether filled or still empty.
                 'is_readonly' => $isAlwaysReadOnly,
                 'editable' => !$isAlwaysReadOnly,
-                'missing' => !$hasValue,
+                'missing' => !$hasValue && !$isAlwaysReadOnly,
             ];
         }
 
-        $missingCount = count(array_filter($result, function ($f) {
-            return $f['missing'];
-        }));
+        // Completeness is based ONLY on the student-editable fields, so a
+        // blank read-only field never leaves the student stuck at "missing".
+        $missingFields = $this->nerdMissingFields($student->id);
+        $missingCount = count($missingFields);
 
         return response()->json([
             'success' => true,
@@ -1189,6 +1190,7 @@ class NyscStudentController extends Controller
                 'exists' => $nerd !== null,
                 'fields' => $result,
                 'missing_count' => $missingCount,
+                'missing_fields' => $missingFields,
                 'complete' => $missingCount === 0,
             ]
         ]);
@@ -1250,14 +1252,16 @@ class NyscStudentController extends Controller
         }
 
         if (count($providedFields) === 0) {
+            $missingFields = $this->nerdMissingFields($student->id);
             return response()->json([
                 'success' => false,
                 'message' => 'Provide the one field you want to correct.',
                 'data' => [
                     'updated_fields' => [],
                     'updated_count' => 0,
-                    'missing_count' => $this->nerdEditableFieldCount($student->id),
-                    'complete' => $this->nerdEditableFieldCount($student->id) === 0,
+                    'missing_count' => count($missingFields),
+                    'missing_fields' => $missingFields,
+                    'complete' => $missingFields === [],
                 ],
             ], 422);
         }
@@ -1286,6 +1290,7 @@ class NyscStudentController extends Controller
         );
 
         $remaining = $this->nerdEditableFieldCount($student->id);
+        $missingFields = $this->nerdMissingFields($student->id);
 
         return response()->json([
             'success' => true,
@@ -1294,9 +1299,32 @@ class NyscStudentController extends Controller
                 'updated_fields' => [$field],
                 'updated_count' => 1,
                 'missing_count' => $remaining,
+                'missing_fields' => $missingFields,
                 'complete' => $remaining === 0,
             ]
         ]);
+    }
+
+    /**
+     * Keys of the student-editable nerd fields that are still empty for a
+     * student. Only the editable fields count towards completeness; read-only
+     * display fields are ignored so a blank one never leaves a student stuck
+     * at "1 field missing".
+     *
+     * @param  int  $studentId
+     * @return array<int, string>
+     */
+    private function nerdMissingFields(int $studentId): array
+    {
+        $nerd = StudentNerd::where('student_id', $studentId)->first();
+        $missing = [];
+        foreach (self::NERD_STUDENT_EDITABLE_FIELDS as $field) {
+            $value = $nerd ? $nerd->{$field} : null;
+            if ($value === null || trim((string) $value) === '') {
+                $missing[] = $field;
+            }
+        }
+        return $missing;
     }
 
     /**
@@ -1307,15 +1335,7 @@ class NyscStudentController extends Controller
      */
     private function nerdEditableFieldCount(int $studentId): int
     {
-        $nerd = StudentNerd::where('student_id', $studentId)->first();
-        $missing = 0;
-        foreach (self::NERD_STUDENT_EDITABLE_FIELDS as $field) {
-            $value = $nerd ? $nerd->{$field} : null;
-            if ($value === null || trim((string) $value) === '') {
-                $missing++;
-            }
-        }
-        return $missing;
+        return count($this->nerdMissingFields($studentId));
     }
 
     /**
